@@ -12,10 +12,10 @@ import argparse
 import shutil
 import subprocess
 
-version = '1.0'
+version = '1.01'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2025-08-26'
+COMMIT_DATE = '2025-08-27'
 
 
 SMARTCTL_PATH = shutil.which("smartctl")
@@ -571,7 +571,7 @@ def main():
 						   formated_only=args.formated_only, show_zero_size_devices=args.show_zero_size_devices)
 	if args.json:
 		import json
-		print(json.dumps(results, indent=4))
+		print(json.dumps(results, indent=1))
 	else:
 		print(pretty_format_table(results))
 
