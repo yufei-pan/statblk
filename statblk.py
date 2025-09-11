@@ -276,7 +276,7 @@ except :
 	def cache_decorator(func):
 		return func
 
-version = '1.21'
+version = '1.24'
 VERSION = version
 __version__ = version
 COMMIT_DATE = '2025-09-10'
@@ -293,11 +293,11 @@ def read_text(path):
 def read_int(path):
 	s = read_text(path)
 	if s is None:
-		return None
+		return 0
 	try:
 		return int(s)
 	except Exception:
-		return None
+		return 0
 
 def build_symlink_dict(dir_path):
 	"""
@@ -337,7 +337,7 @@ def read_discard_support(sysfs_block_path):
 		return 'N/A'
 	dmbytes = read_int(os.path.join(sysfs_block_path, "queue", "discard_max_bytes"))
 	try:
-		if (dmbytes or 0) > 0:
+		if dmbytes > 0:
 			return 'Yes'
 		else:
 			return 'No'
@@ -345,7 +345,7 @@ def read_discard_support(sysfs_block_path):
 		return 'N/A'
 
 @cache_decorator
-def get_parent_device_sysfs(sysfs_block_path):
+def get_real_sysfs_device_path(sysfs_block_path):
 	"""
 	Return the sysfs 'device' directory for this block node (resolves partition
 	to its parent device as well).
@@ -360,7 +360,7 @@ def get_parent_device_sysfs(sysfs_block_path):
 def read_model_and_serial(sysfs_block_path):
 	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
 		return '', ''
-	device_path = get_parent_device_sysfs(sysfs_block_path)
+	device_path = get_real_sysfs_device_path(sysfs_block_path)
 	model = read_text(os.path.join(device_path, "model"))
 	serial = read_text(os.path.join(device_path, "serial"))
 	if serial is None:
@@ -375,12 +375,20 @@ def read_model_and_serial(sysfs_block_path):
 		serial = ''
 	return model, serial
 
+def read_size(sysfs_block_path):# -> tuple[int | None, Any] | Literal['']:
+	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
+		return ''
+	size = read_int(os.path.join(sysfs_block_path, "size"))
+	return size
+
 MountEntry = namedtuple("MountEntry", ["MOUNTPOINT", "FSTYPE", "OPTIONS"])
 def parseMount():
 	rtn = multiCMD.run_command('mount',timeout=1,quiet=True)
 	mount_table = defaultdict(list)
 	for line in rtn:
 		device_name, _, line = line.partition(' on ')
+		if device_name.startswith(os.path.sep):
+			device_name = os.path.realpath(device_name)
 		mount_point, _, line = line.partition(' type ')
 		fstype, _ , options = line.partition(' (')
 		options = options.rstrip(')').split(',')
@@ -429,7 +437,7 @@ def get_sector_size(sysfs_block_path):
 	if get_partition_parent_name(sysfs_block_path):
 		sysfs_block_path = os.path.join('/sys/class/block', os.path.basename(get_partition_parent_name(sysfs_block_path)))
 	sector_size = read_int(os.path.join(sysfs_block_path, "queue", "hw_sector_size"))
-	if sector_size is None:
+	if sector_size == 0:
 		sector_size = read_int(os.path.join(sysfs_block_path, "queue", "logical_block_size"))
 	return sector_size if sector_size else 512
 
@@ -493,7 +501,9 @@ def get_read_write_rate_throughput_iter(sysfs_block_path):
 
 # DRIVE_INFO = namedtuple("DRIVE_INFO", 
 # 	["NAME", "FSTYPE", "SIZE", "FSUSEPCT", "MOUNTPOINT", "SMART","RTPT",'WTPT', "LABEL", "UUID", "MODEL", "SERIAL", "DISCARD"])
-def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, best_only=False, formated_only=False, show_zero_size_devices=False,pseudo=False,tptDict = {},full=False):
+def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, best_only=False, 
+					formated_only=False, show_zero_size_devices=False,pseudo=False,tptDict = {},
+					full=False,active_only=False):
 	lsblk_result = multiCMD.run_command(f'lsblk -brnp -o NAME,SIZE,FSTYPE,UUID,LABEL',timeout=2,quiet=True,wait_for_return=False,return_object=True)
 	block_devices = get_blocks()
 	smart_infos = {}
@@ -503,7 +513,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			if parent_name not in smart_infos:
 				smart_infos[parent_name] = multiCMD.run_command(f'{SMARTCTL_PATH} -H {parent_name}',timeout=2,quiet=True,wait_for_return=False,return_object=True)
 		if block_device not in tptDict:
-			sysfs_block_path = os.path.realpath(os.path.join('/sys/class/block', os.path.basename(block_device)))
+			sysfs_block_path = os.path.join('/sys/class/block', os.path.basename(block_device))
 			tptDict[block_device] = get_read_write_rate_throughput_iter(sysfs_block_path)
 	mount_table = parseMount()
 	target_devices = set(block_devices)
@@ -518,6 +528,8 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	if lsblk_result.returncode == 0:
 		for line in lsblk_result.stdout:
 			lsblk_name, lsblk_size, lsblk_fstype, lsblk_uuid, lsblk_label = line.split(' ', 4)
+			if lsblk_name.startswith(os.path.sep):
+				lsblk_name = os.path.realpath(lsblk_name)
 			# the label can be \x escaped, we need to decode it
 			lsblk_uuid = bytes(lsblk_uuid, "utf-8").decode("unicode_escape")
 			lsblk_fstype = bytes(lsblk_fstype, "utf-8").decode("unicode_escape")
@@ -532,9 +544,11 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 				size_dict[lsblk_name] = int(lsblk_size)
 			except Exception:
 				pass
-	output = [["NAME", "FSTYPE", "SIZE", "FSUSE%", "MOUNTPOINT", "SMART", "LABEL", "UUID", "MODEL", "SERIAL", "DISCARD","RTPT",'WTPT']]
+	output = [["NAME", "FSTYPE", "SIZE", "FSUSE%", "MOUNTPOINT", "SMART", "LABEL", "UUID", "MODEL", "SERIAL", "DISCARD","READ",'WRITE']]
 	for device_name in target_devices:
 		if mounted_only and device_name not in mount_table:
+			continue
+		if active_only and device_name not in tptDict:
 			continue
 		fstype = ''
 		size = ''
@@ -568,9 +582,12 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 					elif "denied" in line:
 						smart = 'DENIED'
 						break
+			size_bytes = read_size(os.path.join('/sys/class/block', os.path.basename(device_name)))
 		if device_name in tptDict:
 			try:
 				rtpt, wtpt = next(tptDict[device_name])
+				if active_only and rtpt == 0 and wtpt == 0:
+					continue
 				if print_bytes:
 					rtpt = str(rtpt)
 					wtpt = str(wtpt)
@@ -603,13 +620,14 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 				else:
 					size = multiCMD.format_bytes(size_bytes, use_1024_bytes=use_1024, to_str=True) + 'B'
 				if not full:
-					device_name = device_name.lstrip('/dev/')
+					device_name = device_name.replace('/dev/', '')
 				output.append([device_name, fstype, size, fsusepct, mountpoint, smart, label, uuid, model, serial, discard, rtpt, wtpt])
 		else:
 			if formated_only and device_name not in fstype_dict:
 				continue
 			fstype = fstype_dict.get(device_name, '')
-			size_bytes = size_dict.get(device_name, 0)
+			if not size_bytes:
+				size_bytes = size_dict.get(device_name, 0)
 			if size_bytes == 0 and not show_zero_size_devices:
 				continue
 			if print_bytes:
@@ -617,7 +635,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			else:
 				size = multiCMD.format_bytes(size_bytes, use_1024_bytes=use_1024, to_str=True) + 'B'
 			if not full:
-				device_name = device_name.lstrip('/dev/')
+				device_name = device_name.replace('/dev/', '')
 			output.append([device_name, fstype, size, fsusepct, mountpoint, smart, label, uuid, model, serial, discard, rtpt, wtpt])
 	return output
 
@@ -630,7 +648,8 @@ def main():
 	parser.add_argument('-F','-fo','--formated_only', help="Show only formated filesystems", action="store_true")
 	parser.add_argument('-M','-mo','--mounted_only', help="Show only mounted filesystems", action="store_true")
 	parser.add_argument('-B','-bo','--best_only', help="Show only shortest mount point for each device", action="store_true")
-	parser.add_argument('-a','--full', help="Show full device information, do not collapse drive info when length > console length", action="store_true")
+	parser.add_argument('-A','-ao','--active_only', help="Show only active devices (positive read/write activity)", action="store_true")
+	parser.add_argument('-R','--full', help="Show full device information, do not collapse drive info when length > console length", action="store_true")
 	parser.add_argument('-P','--pseudo', help="Include pseudo file systems as well (tmpfs / nfs / cifs etc.)", action="store_true")
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")
 	parser.add_argument('print_period', nargs='?', default=0, type=int, help="If specified as a number, repeat the output every N seconds")
@@ -642,7 +661,7 @@ def main():
 		results = get_drives_info(print_bytes = args.bytes, use_1024 = not args.si, 
 							mounted_only=args.mounted_only, best_only=args.best_only, 
 							formated_only=args.formated_only, show_zero_size_devices=args.show_zero_size_devices,
-							pseudo=args.pseudo,tptDict=tptDict,full=args.full)
+							pseudo=args.pseudo,tptDict=tptDict,full=args.full,active_only=args.active_only)
 		if args.json:
 			import json
 			print(json.dumps(results, indent=1))
