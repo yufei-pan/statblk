@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 # requires-python = ">=3.6"
 # -*- coding: utf-8 -*-
-
-
-
 import os
 import re
 import stat
@@ -280,10 +277,10 @@ except :
 	def cache_decorator(func):
 		return func
 
-version = '1.26'
+version = '1.28'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2025-09-10'
+COMMIT_DATE = '2025-09-11'
 
 SMARTCTL_PATH = shutil.which("smartctl")
 
@@ -503,20 +500,44 @@ def get_read_write_rate_throughput_iter(sysfs_block_path):
 		except Exception:
 			yield 0, 0
 
+ALL_OUTPUT_FIELDS = ["NAME", "FSTYPE", "SIZE", "FSUSE%", "MOUNTPOINT", "SMART", "LABEL", "UUID", "MODEL", "SERIAL", "DISCARD", "READ", "WRITE"]
+
 # DRIVE_INFO = namedtuple("DRIVE_INFO", 
 # 	["NAME", "FSTYPE", "SIZE", "FSUSEPCT", "MOUNTPOINT", "SMART","RTPT",'WTPT', "LABEL", "UUID", "MODEL", "SERIAL", "DISCARD"])
 def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, best_only=False, 
 					formated_only=False, show_zero_size_devices=False,pseudo=False,tptDict = {},
-					full=False,active_only=False):
-	lsblk_result = multiCMD.run_command(f'lsblk -brnp -o NAME,SIZE,FSTYPE,UUID,LABEL',timeout=2,quiet=True,wait_for_return=False,return_object=True)
+					full=False,active_only=False,output="all",exclude=""):
+	global SMARTCTL_PATH
+	global ALL_OUTPUT_FIELDS
+	if output == "all":
+		output_fields = ALL_OUTPUT_FIELDS
+	else:
+		output_fields = [x.strip().upper() for x in output.split(',')]
+		for field in output_fields:
+			if field not in ALL_OUTPUT_FIELDS:
+				print(f"Ignoring invalid output field: {field}.", file=sys.stderr)
+				output_fields.remove(field)
+	if exclude:
+		exclude_fields = [x.strip().upper() for x in exclude.split(',')]
+		for field in exclude_fields:
+			if field in output_fields:
+				output_fields.remove(field)
+	if not output_fields:
+		print("No valid output fields specified.", file=sys.stderr)
+		return []
+	output_list = [output_fields]
+	output_fields_set = set(output_fields)
+	if {'SIZE','FSTYPE','UUID','LABEL'}.intersection(output_fields_set):
+		lsblk_result = multiCMD.run_command(f'lsblk -brnp -o NAME,SIZE,FSTYPE,UUID,LABEL',timeout=2,quiet=True,wait_for_return=False,return_object=True)
 	block_devices = get_blocks()
 	smart_infos = {}
 	for block_device in block_devices:
-		parent_name = get_partition_parent_name(block_device)
-		if parent_name:
-			if parent_name not in smart_infos:
-				smart_infos[parent_name] = multiCMD.run_command(f'{SMARTCTL_PATH} -H {parent_name}',timeout=2,quiet=True,wait_for_return=False,return_object=True)
-		if block_device not in tptDict:
+		if 'SMART' in output_fields_set:
+			parent_name = get_partition_parent_name(block_device)
+			if parent_name:
+				if parent_name not in smart_infos:
+					smart_infos[parent_name] = multiCMD.run_command(f'{SMARTCTL_PATH} -H {parent_name}',timeout=2,quiet=True,wait_for_return=False,return_object=True)
+		if ('READ' in output_fields_set or 'WRITE' in output_fields_set) and block_device not in tptDict:
 			sysfs_block_path = os.path.join('/sys/class/block', os.path.basename(block_device))
 			tptDict[block_device] = get_read_write_rate_throughput_iter(sysfs_block_path)
 	mount_table = parseMount()
@@ -524,56 +545,56 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	if pseudo:
 		target_devices.update(mount_table.keys())
 	target_devices = sorted(target_devices)
-	uuid_dict = build_symlink_dict("/dev/disk/by-uuid")
-	label_dict = build_symlink_dict("/dev/disk/by-label")
+	uuid_dict = {}
+	if 'UUID' in output_fields_set:
+		uuid_dict = build_symlink_dict("/dev/disk/by-uuid")
+	label_dict = {}
+	if 'LABEL' in output_fields_set:
+		label_dict = build_symlink_dict("/dev/disk/by-label")
 	fstype_dict = {}
 	size_dict = {}
-	lsblk_result.thread.join()
-	if lsblk_result.returncode == 0:
-		for line in lsblk_result.stdout:
-			lsblk_name, lsblk_size, lsblk_fstype, lsblk_uuid, lsblk_label = line.split(' ', 4)
-			if lsblk_name.startswith(os.path.sep):
-				lsblk_name = os.path.realpath(lsblk_name)
-			# the label can be \x escaped, we need to decode it
-			lsblk_uuid = bytes(lsblk_uuid, "utf-8").decode("unicode_escape")
-			lsblk_fstype = bytes(lsblk_fstype, "utf-8").decode("unicode_escape")
-			lsblk_label = bytes(lsblk_label, "utf-8").decode("unicode_escape")
-			if lsblk_uuid:
-				uuid_dict[lsblk_name] = lsblk_uuid
-			if lsblk_fstype:
-				fstype_dict[lsblk_name] = lsblk_fstype
-			if lsblk_label:
-				label_dict[lsblk_name] = lsblk_label
-			try:
-				size_dict[lsblk_name] = int(lsblk_size)
-			except Exception:
-				pass
-	output = [["NAME", "FSTYPE", "SIZE", "FSUSE%", "MOUNTPOINT", "SMART", "LABEL", "UUID", "MODEL", "SERIAL", "DISCARD","READ",'WRITE']]
+	if {'SIZE','FSTYPE','UUID','LABEL'}.intersection(output_fields_set):
+		lsblk_result.thread.join()
+		if lsblk_result.returncode == 0:
+			for line in lsblk_result.stdout:
+				lsblk_name, lsblk_size, lsblk_fstype, lsblk_uuid, lsblk_label = line.split(' ', 4)
+				if lsblk_name.startswith(os.path.sep):
+					lsblk_name = os.path.realpath(lsblk_name)
+				# the label can be \x escaped, we need to decode it
+				if 'UUID' in output_fields_set:
+					lsblk_uuid = bytes(lsblk_uuid, "utf-8").decode("unicode_escape")
+					if lsblk_uuid:
+						uuid_dict[lsblk_name] = lsblk_uuid
+				if 'FSTYPE' in output_fields_set:
+					lsblk_fstype = bytes(lsblk_fstype, "utf-8").decode("unicode_escape")
+					if lsblk_fstype:
+						fstype_dict[lsblk_name] = lsblk_fstype
+				if 'LABEL' in output_fields_set:
+					lsblk_label = bytes(lsblk_label, "utf-8").decode("unicode_escape")
+					if lsblk_label:
+						label_dict[lsblk_name] = lsblk_label
+				if 'SIZE' in output_fields_set:
+					try:
+						size_dict[lsblk_name] = int(lsblk_size)
+					except Exception:
+						pass
 	for device_name in target_devices:
 		if mounted_only and device_name not in mount_table:
 			continue
 		if active_only and device_name not in tptDict:
 			continue
-		fstype = ''
-		size = ''
-		fsusepct = ''
-		mountpoint = ''
-		smart = ''
-		label = ''
-		uuid = ''
-		model = ''
-		serial = ''
-		discard = ''
-		rtpt = ''
-		wtpt = ''
+		device_properties = defaultdict(str)
+		device_properties['NAME'] = device_name if full else device_name.replace('/dev/', '')
 		# fstype, size, fsuse%, mountpoint, rtpt, wtpt, lable, uuid are partition specific
 		# smart, model, serial, discard are device specific, and only for block devices
 		# fstype, size, fsuse%, mountpoint does not require block device and can have multiple values per device
 		if is_block_device(device_name):
 			parent_name = get_partition_parent_name(device_name)
 			parent_sysfs_path = os.path.realpath(os.path.join('/sys/class/block', os.path.basename(parent_name))) if parent_name else None
-			model, serial = read_model_and_serial(parent_sysfs_path)
-			discard = read_discard_support(parent_sysfs_path)
+			if 'MODEL' in output_fields_set or 'SERIAL' in output_fields_set:
+				device_properties['MODEL'], device_properties['SERIAL'] = read_model_and_serial(parent_sysfs_path)
+			if 'DISCARD' in output_fields_set:
+				device_properties['DISCARD'] = read_discard_support(parent_sysfs_path)
 			if parent_name in smart_infos and SMARTCTL_PATH:
 				smart_info_obj = smart_infos[parent_name]
 				smart_info_obj.thread.join()
@@ -581,68 +602,64 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 					line = line.lower()
 					if "health" in line:
 						smartinfo = line.rpartition(':')[2].strip().upper()
-						smart = smartinfo.replace('PASSED', 'OK')
+						device_properties['SMART'] = smartinfo.replace('PASSED', 'OK')
 						break
 					elif "denied" in line:
-						smart = 'DENIED'
+						device_properties['SMART'] = 'DENIED'
 						break
 			size_bytes = read_size(os.path.join('/sys/class/block', os.path.basename(device_name)))
 		if device_name in tptDict:
 			try:
-				rtpt, wtpt = next(tptDict[device_name])
-				if active_only and rtpt == 0 and wtpt == 0:
+				device_properties['READ'], device_properties['WRITE'] = next(tptDict[device_name])
+				if active_only and device_properties['READ'] == 0 and device_properties['WRITE'] == 0:
 					continue
 				if print_bytes:
-					rtpt = str(rtpt)
-					wtpt = str(wtpt)
+					device_properties['READ'] = str(device_properties['READ'])
+					device_properties['WRITE'] = str(device_properties['WRITE'])
 				else:
-					rtpt = multiCMD.format_bytes(rtpt, use_1024_bytes=use_1024, to_str=True,str_format='.0f') + 'B/s'
-					wtpt = multiCMD.format_bytes(wtpt, use_1024_bytes=use_1024, to_str=True,str_format='.0f') + 'B/s'
+					device_properties['READ'] = multiCMD.format_bytes(device_properties['READ'], use_1024_bytes=use_1024, to_str=True,str_format='.0f') + 'B/s'
+					device_properties['WRITE'] = multiCMD.format_bytes(device_properties['WRITE'], use_1024_bytes=use_1024, to_str=True,str_format='.0f') + 'B/s'
 			except Exception:
-				rtpt = ''
-				wtpt = ''
+				device_properties['READ'] = ''
+				device_properties['WRITE'] = ''
 		if device_name in label_dict:
-			label = label_dict[device_name]
+			device_properties['LABEL'] = label_dict[device_name]
 		if device_name in uuid_dict:
-			uuid = uuid_dict[device_name]
+			device_properties['UUID'] = uuid_dict[device_name]
 		mount_points = mount_table.get(device_name, [])
 		if best_only:
 			if mount_points:
 				mount_points = [sorted(mount_points, key=lambda x: len(x.MOUNTPOINT))[0]]
 		if mount_points:
 			for mount_entry in mount_points:
-				fstype = mount_entry.FSTYPE
-				if formated_only and not fstype:
+				device_properties['FSTYPE'] = mount_entry.FSTYPE
+				if formated_only and not device_properties['FSTYPE']:
 					continue
-				mountpoint = mount_entry.MOUNTPOINT
-				size_bytes, used_bytes = get_statvfs_use_size(mountpoint)
+				device_properties['MOUNTPOINT'] = mount_entry.MOUNTPOINT
+				size_bytes, used_bytes = get_statvfs_use_size(device_properties['MOUNTPOINT'])
 				if size_bytes == 0 and not show_zero_size_devices:
 					continue
-				fsusepct = f"{int(round(100.0 * used_bytes / size_bytes))}%" if size_bytes > 0 else "N/A"
+				device_properties['FSUSE%'] = f"{int(round(100.0 * used_bytes / size_bytes))}%" if size_bytes > 0 else "N/A"
 				if print_bytes:
-					size = str(size_bytes)
+					device_properties['SIZE'] = str(size_bytes)
 				else:
-					size = multiCMD.format_bytes(size_bytes, use_1024_bytes=use_1024, to_str=True) + 'B'
-				if not full:
-					device_name = device_name.replace('/dev/', '')
-				output.append([device_name, fstype, size, fsusepct, mountpoint, smart, label, uuid, model, serial, discard, rtpt, wtpt])
+					device_properties['SIZE'] = multiCMD.format_bytes(size_bytes, use_1024_bytes=use_1024, to_str=True) + 'B'
+				output_list.append([device_properties[output_field] for output_field in output_fields])
 		else:
 			if formated_only and device_name not in fstype_dict:
 				continue
-			fstype = fstype_dict.get(device_name, '')
+			device_properties['FSTYPE'] = fstype_dict.get(device_name, '')
 			if not size_bytes:
 				size_bytes = size_dict.get(device_name, 0)
 			if size_bytes == 0 and not show_zero_size_devices:
 				continue
 			if print_bytes:
-				size = str(size_bytes)
+				device_properties['SIZE'] = str(size_bytes)
 			else:
-				size = multiCMD.format_bytes(size_bytes, use_1024_bytes=use_1024, to_str=True) + 'B'
-			if not full:
-				device_name = device_name.replace('/dev/', '')
-			output.append([device_name, fstype, size, fsusepct, mountpoint, smart, label, uuid, model, serial, discard, rtpt, wtpt])
+				device_properties['SIZE'] = multiCMD.format_bytes(size_bytes, use_1024_bytes=use_1024, to_str=True) + 'B'
+			output_list.append([device_properties[output_field] for output_field in output_fields])
 		multiCMD.join_threads()
-	return output
+	return output_list
 
 
 def main():
@@ -656,6 +673,8 @@ def main():
 	parser.add_argument('-A','-ao','--active_only', help="Show only active devices (positive read/write activity)", action="store_true")
 	parser.add_argument('-R','--full', help="Show full device information, do not collapse drive info when length > console length", action="store_true")
 	parser.add_argument('-P','--pseudo', help="Include pseudo file systems as well (tmpfs / nfs / cifs etc.)", action="store_true")
+	parser.add_argument('-o','--output', help="Specify which output columns to print.Use comma to separate columns. default: all available", default="all", type=str)
+	parser.add_argument('-x','--exclude', help="Specify which output columns to exclude.Use comma to separate columns. default: none", default="", type=str)
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")
 	parser.add_argument('print_period', nargs='?', default=0, type=int, help="If specified as a number, repeat the output every N seconds")
 	parser.add_argument('-V', '--version', action='version', version=f"%(prog)s {version} @ {COMMIT_DATE} stat drives by pan@zopyr.us")
@@ -666,7 +685,7 @@ def main():
 		results = get_drives_info(print_bytes = args.bytes, use_1024 = not args.si, 
 							mounted_only=args.mounted_only, best_only=args.best_only, 
 							formated_only=args.formated_only, show_zero_size_devices=args.show_zero_size_devices,
-							pseudo=args.pseudo,tptDict=tptDict,full=args.full,active_only=args.active_only)
+							pseudo=args.pseudo,tptDict=tptDict,full=args.full,active_only=args.active_only,output=args.output,exclude=args.exclude)
 		if args.json:
 			import json
 			print(json.dumps(results, indent=1))
