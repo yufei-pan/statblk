@@ -139,6 +139,10 @@ except:
 			elif return_object:return A
 			elif with_stdErr:return[A.stdout+A.stderr for A in A]
 			else:return[A.stdout for A in A]
+		def join_threads(threads=...,timeout=None):
+			A=multiCMD.__running_threads if threads is ... else threads
+			for B in A:B.join(timeout=timeout)
+			if A is multiCMD.__running_threads:multiCMD.__running_threads={A for A in A if A.is_alive()}
 		def pretty_format_table(data,delimiter='\t',header=None,full=False):
 			O=delimiter;B=header;A=data;import re;S=1.12;Z=S
 			def J(s):return len(re.sub('\\x1b\\[[0-?]*[ -/]*[@-~]','',s))
@@ -276,7 +280,7 @@ except :
 	def cache_decorator(func):
 		return func
 
-version = '1.25'
+version = '1.26'
 VERSION = version
 __version__ = version
 COMMIT_DATE = '2025-09-10'
@@ -637,6 +641,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			if not full:
 				device_name = device_name.replace('/dev/', '')
 			output.append([device_name, fstype, size, fsusepct, mountpoint, smart, label, uuid, model, serial, discard, rtpt, wtpt])
+		multiCMD.join_threads()
 	return output
 
 
