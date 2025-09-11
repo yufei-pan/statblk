@@ -7,16 +7,57 @@
 import os
 import re
 import stat
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 import argparse
 import shutil
 import subprocess
+import multiCMD
+import time
+try:
+	import functools
+	import typing
+	# Check if functiools.cache is available
+	# cache_decorator = functools.cache
+	def cache_decorator(user_function):
+		def _make_hashable(item):
+			if isinstance(item, typing.Mapping):
+				# Sort items so that {'a':1, 'b':2} and {'b':2, 'a':1} hash the same
+				return tuple(
+					( _make_hashable(k), _make_hashable(v) )
+					for k, v in sorted(item.items(), key=lambda item: item[0])
+				)
+			if isinstance(item, (list, set, tuple)):
+				return tuple(_make_hashable(e) for e in item)
+			# Fallback: assume item is already hashable
+			return item
+		def decorating_function(user_function):
+			# Create the real cached function
+			cached_func = functools.lru_cache(maxsize=None)(user_function)
+			@functools.wraps(user_function)
+			def wrapper(*args, **kwargs):
+				# Convert all args/kwargs to hashable equivalents
+				hashable_args = tuple(_make_hashable(a) for a in args)
+				hashable_kwargs = {
+					k: _make_hashable(v) for k, v in kwargs.items()
+				}
+				# Call the lru-cached version
+				return cached_func(*hashable_args, **hashable_kwargs)
+			# Expose cache statistics and clear method
+			wrapper.cache_info = cached_func.cache_info
+			wrapper.cache_clear = cached_func.cache_clear
+			return wrapper
+		return decorating_function(user_function)
+except :
+	import sys
+	# If lrucache is not available, use a dummy decorator
+	print('Warning: functools.lru_cache is not available, multiSSH3 will run slower without cache.',file=sys.stderr)
+	def cache_decorator(func):
+		return func
 
-version = '1.01'
+version = '1.20'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2025-08-27'
-
+COMMIT_DATE = '2025-09-10'
 
 SMARTCTL_PATH = shutil.which("smartctl")
 
@@ -27,7 +68,6 @@ def read_text(path):
 	except Exception:
 		return None
 
-
 def read_int(path):
 	s = read_text(path)
 	if s is None:
@@ -37,8 +77,7 @@ def read_int(path):
 	except Exception:
 		return None
 
-
-def build_symlink_map(dir_path):
+def build_symlink_dict(dir_path):
 	"""
 	Build map: devname -> token (uuid or label string) using symlinks under
 	/dev/disk/by-uuid or /dev/disk/by-label.
@@ -52,177 +91,89 @@ def build_symlink_map(dir_path):
 			try:
 				if os.path.islink(p):
 					tgt = os.path.realpath(p)
-					devname = os.path.basename(tgt)
-					mapping.setdefault(devname, entry)
+					mapping.setdefault(tgt, entry)
 			except Exception:
 				continue
 	except Exception:
 		pass
 	return mapping
 
-
-def parse_mountinfo_enhanced(uuid_rev, label_rev):
-	"""
-	Parse /proc/self/mountinfo.
-
-	Returns:
-	- by_majmin: dict "major:minor" -> list of mounts
-	- by_devname: dict devname -> list of mounts (resolved from source)
-	- all_mounts: list of mount dicts
-
-	Each mount dict: {mountpoint, fstype, source, majmin}
-	"""
-	by_majmin = defaultdict(list)
-	by_devname = defaultdict(list)
-	all_mounts = []
-
-	def resolve_source_to_devnames(src):
-		# Returns list of candidate devnames for a given source string
-		if not src:
-			return []
-		cands = []
-		try:
-			if src.startswith("/dev/"):
-				real = os.path.realpath(src)
-				dn = os.path.basename(real)
-				if dn:
-					cands.append(dn)
-			elif src.startswith("UUID="):
-				u = src[5:]
-				dn = uuid_rev.get(u)
-				if dn:
-					cands.append(dn)
-			elif src.startswith("LABEL="):
-				l = src[6:]
-				dn = label_rev.get(l)
-				if dn:
-					cands.append(dn)
-		except Exception:
-			pass
-		return cands
-
-	try:
-		with open("/proc/self/mountinfo", "r", encoding="utf-8") as f:
-			for line in f:
-				line = line.strip()
-				if not line:
-					continue
-				parts = line.split()
-				try:
-					majmin = parts[2]
-					mnt_point = parts[4]
-					dash_idx = parts.index("-")
-					fstype = parts[dash_idx + 1]
-					source = parts[dash_idx + 2] if len(parts) > dash_idx + 2 else ""
-					rec = {
-						"MOUNTPOINT": mnt_point,
-						"FSTYPE": fstype,
-						"SOURCE": source,
-						"MAJMIN": majmin,
-					}
-					all_mounts.append(rec)
-					by_majmin[majmin].append(rec)
-					# Build secondary index by devname from source
-					for dn in resolve_source_to_devnames(source):
-						by_devname[dn].append(rec)
-				except Exception:
-					continue
-	except Exception:
-		pass
-
-	return by_majmin, by_devname, all_mounts
-
-
-def get_statvfs_use_percent(mountpoint):
+def get_statvfs_use_size(mountpoint):
 	try:
 		st = os.statvfs(mountpoint)
-		if st.f_blocks == 0:
-			return None
-		used_pct = 100.0 * (1.0 - (st.f_bavail / float(st.f_blocks)))
-		return int(round(used_pct))
+		block_size = st.f_frsize if st.f_frsize > 0 else st.f_bsize
+		total = st.f_blocks * block_size
+		avail = st.f_bavail * block_size
+		used = total - avail
+		return total, used
 	except Exception:
-		return None
+		return 0, 0
 
-
-def read_discard_support(sys_block_path):
-	if not sys_block_path or not os.path.isdir(sys_block_path):
-		return False
-	dmbytes = read_int(os.path.join(sys_block_path, "queue", "discard_max_bytes"))
-	dgran = read_int(os.path.join(sys_block_path, "queue", "discard_granularity"))
+@cache_decorator
+def read_discard_support(sysfs_block_path):
+	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
+		return 'N/A'
+	dmbytes = read_int(os.path.join(sysfs_block_path, "queue", "discard_max_bytes"))
 	try:
-		return (dmbytes or 0) > 0 or (dgran or 0) > 0
+		if (dmbytes or 0) > 0:
+			return 'Yes'
+		else:
+			return 'No'
 	except Exception:
-		return False
+		return 'N/A'
 
-
-def get_parent_device_sysfs(block_sysfs_path):
+@cache_decorator
+def get_parent_device_sysfs(sysfs_block_path):
 	"""
 	Return the sysfs 'device' directory for this block node (resolves partition
 	to its parent device as well).
 	"""
-	dev_link = os.path.join(block_sysfs_path, "device")
+	dev_link = os.path.join(sysfs_block_path, "device")
 	try:
 		return os.path.realpath(dev_link)
 	except Exception:
 		return dev_link
 
-
-def read_model_and_serial(block_sysfs_path):
-	if not block_sysfs_path or not os.path.isdir(block_sysfs_path):
-		return None, None
-	device_path = get_parent_device_sysfs(block_sysfs_path)
+@cache_decorator
+def read_model_and_serial(sysfs_block_path):
+	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
+		return '', ''
+	device_path = get_parent_device_sysfs(sysfs_block_path)
 	model = read_text(os.path.join(device_path, "model"))
 	serial = read_text(os.path.join(device_path, "serial"))
 	if serial is None:
 		serial = read_text(os.path.join(device_path, "wwid"))
 	if model:
 		model = " ".join(model.split())
+	else:
+		model = ''
 	if serial:
 		serial = " ".join(serial.split())
+	else:
+		serial = ''
 	return model, serial
 
+MountEntry = namedtuple("MountEntry", ["MOUNTPOINT", "FSTYPE", "OPTIONS"])
+def parseMount():
+	rtn = multiCMD.run_command('mount',timeout=1,quiet=True)
+	mount_table = defaultdict(list)
+	for line in rtn:
+		device_name, _, line = line.partition(' on ')
+		mount_point, _, line = line.partition(' type ')
+		fstype, _ , options = line.partition(' (')
+		options = options.rstrip(')').split(',')
+		mount_table[device_name].append(MountEntry(mount_point, fstype, options))
+	return mount_table
 
-def get_udev_props(major, minor):
-	"""
-	Read udev properties for a block device from /run/udev/data/bMAJ:MIN
-	Returns keys like ID_FS_TYPE, ID_FS_LABEL, ID_FS_UUID when available.
-	"""
-	props = {}
-	path = f"/run/udev/data/b{major}:{minor}"
-	try:
-		with open(path, "r", encoding="utf-8", errors="ignore") as f:
-			for line in f:
-				line = line.strip()
-				if not line or "=" not in line or line.startswith("#"):
-					continue
-				k, v = line.split("=", 1)
-				props[k] = v
-	except Exception:
-		pass
-	return props
+def get_blocks():
+	# get entries in /sys/class/block
+	block_devices = []
+	for entry in os.listdir("/sys/class/block"):
+		if os.path.isdir(os.path.join("/sys/class/block", entry)):
+			block_devices.append(f'/dev/{entry}')
+	return block_devices
 
-
-def choose_mount_for_dev(devname, mounts):
-	"""
-	Choose the most relevant mount for a device:
-	- Prefer mounts whose source resolves to /dev/<devname>.
-	- If multiple, prefer '/' then shortest mountpoint path.
-	- Otherwise return the first entry.
-	"""
-	if not mounts:
-		return None
-
-	def score(m):
-		mp = m.get("MOUNTPOINT") or "~"
-		s = m.get("SOURCE") or ""
-		exact = 1 if (s.startswith("/dev/") and os.path.basename(os.path.realpath(s)) == devname) else 0
-		root = 1 if mp == "/" else 0
-		return (exact, root, -len(mp))
-
-	best = sorted(mounts, key=score, reverse=True)[0]
-	return best
-
-
+@cache_decorator
 def is_block_device(devpath):
 	try:
 		st_mode = os.stat(devpath).st_mode
@@ -230,329 +181,224 @@ def is_block_device(devpath):
 	except Exception:
 		return False
 
+def is_partition(sysfs_block_path):
+	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
+		return False
+	return os.path.exists(os.path.join(sysfs_block_path, "partition"))
 
-def pretty_format_table(data, delimiter="\t", header=None):
-	version = 1.11
-	_ = version
-	if not data:
-		return ""
-	if isinstance(data, str):
-		data = data.strip("\n").split("\n")
-		data = [line.split(delimiter) for line in data]
-	elif isinstance(data, dict):
-		if isinstance(next(iter(data.values())), dict):
-			tempData = [["key"] + list(next(iter(data.values())).keys())]
-			tempData.extend(
-				[[key] + list(value.values()) for key, value in data.items()]
-			)
-			data = tempData
-		else:
-			data = [[key] + list(value) for key, value in data.items()]
-	elif not isinstance(data, list):
-		data = list(data)
-	if isinstance(data[0], dict):
-		tempData = [data[0].keys()]
-		tempData.extend([list(item.values()) for item in data])
-		data = tempData
-	data = [[str(item) for item in row] for row in data]
-	num_cols = len(data[0])
-	col_widths = [0] * num_cols
-	for c in range(num_cols):
-		col_widths[c] = max(
-			len(re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", row[c])) for row in data
-		)
-	if header:
-		header_widths = [
-			len(re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", col)) for col in header
-		]
-		col_widths = [max(col_widths[i], header_widths[i]) for i in range(num_cols)]
-	row_format = " | ".join("{{:<{}}}".format(width) for width in col_widths)
-	if not header:
-		header = data[0]
-		outTable = []
-		outTable.append(row_format.format(*header))
-		outTable.append("-+-".join("-" * width for width in col_widths))
-		for row in data[1:]:
-			if not any(row):
-				outTable.append("-+-".join("-" * width for width in col_widths))
-			else:
-				outTable.append(row_format.format(*row))
-	else:
-		if isinstance(header, str):
-			header = header.split(delimiter)
-		if len(header) < num_cols:
-			header += [""] * (num_cols - len(header))
-		elif len(header) > num_cols:
-			header = header[:num_cols]
-		outTable = []
-		outTable.append(row_format.format(*header))
-		outTable.append("-+-".join("-" * width for width in col_widths))
-		for row in data:
-			if not any(row):
-				outTable.append("-+-".join("-" * width for width in col_widths))
-			else:
-				outTable.append(row_format.format(*row))
-	return "\n".join(outTable) + "\n"
-
-
-def format_bytes(
-	size, use_1024_bytes=None, to_int=False, to_str=False, str_format=".2f"
-):
-	if to_int or isinstance(size, str):
-		if isinstance(size, int):
-			return size
-		elif isinstance(size, str):
-			match = re.match(r"(\d+(\.\d+)?)\s*([a-zA-Z]*)", size)
-			if not match:
-				if to_str:
-					return size
-				print(
-					"Invalid size format. Expected format: 'number [unit]', "
-					"e.g., '1.5 GiB' or '1.5GiB'"
-				)
-				print(f"Got: {size}")
-				return 0
-			number, _, unit = match.groups()
-			number = float(number)
-			unit = unit.strip().lower().rstrip("b")
-			if unit.endswith("i"):
-				use_1024_bytes = True
-			elif use_1024_bytes is None:
-				use_1024_bytes = False
-			unit = unit.rstrip("i")
-			if use_1024_bytes:
-				power = 2**10
-			else:
-				power = 10**3
-			unit_labels = {
-				"": 0,
-				"k": 1,
-				"m": 2,
-				"g": 3,
-				"t": 4,
-				"p": 5,
-				"e": 6,
-				"z": 7,
-				"y": 8,
-			}
-			if unit not in unit_labels:
-				if to_str:
-					return size
-			else:
-				if to_str:
-					return format_bytes(
-						size=int(number * (power**unit_labels[unit])),
-						use_1024_bytes=use_1024_bytes,
-						to_str=True,
-						str_format=str_format,
-					)
-				return int(number * (power**unit_labels[unit]))
-		else:
-			try:
-				return int(size)
-			except Exception:
-				return 0
-	elif to_str or isinstance(size, int) or isinstance(size, float):
-		if isinstance(size, str):
-			try:
-				size = size.rstrip("B").rstrip("b")
-				size = float(size.lower().strip())
-			except Exception:
-				return size
-		if use_1024_bytes or use_1024_bytes is None:
-			power = 2**10
-			n = 0
-			power_labels = {
-				0: "",
-				1: "Ki",
-				2: "Mi",
-				3: "Gi",
-				4: "Ti",
-				5: "Pi",
-				6: "Ei",
-				7: "Zi",
-				8: "Yi",
-			}
-			while size > power:
-				size /= power
-				n += 1
-			return f"{size:{str_format}} {' '}{power_labels[n]}".replace("  ", " ")
-		else:
-			power = 10**3
-			n = 0
-			power_labels = {
-				0: "",
-				1: "K",
-				2: "M",
-				3: "G",
-				4: "T",
-				5: "P",
-				6: "E",
-				7: "Z",
-				8: "Y",
-			}
-			while size > power:
-				size /= power
-				n += 1
-			return f"{size:{str_format}} {' '}{power_labels[n]}".replace("  ", " ")
-	else:
-		try:
-			return format_bytes(float(size), use_1024_bytes)
-		except Exception:
-			pass
-		return 0
-
-
-def is_partition(name):
-	real = os.path.realpath(os.path.join("/sys/class/block", name))
-	return os.path.exists(os.path.join(real, "partition"))
-
-
+@cache_decorator
 def get_partition_parent_name(name):
-	real = os.path.realpath(os.path.join("/sys/class/block", name))
-	part_file = os.path.join(real, "partition")
-	if not os.path.exists(part_file):
+	if not name:
 		return None
-	parent = os.path.basename(os.path.dirname(real))
-	return parent if parent and parent != name else None
+	name = os.path.basename(name)
+	sysfs_block_path = os.path.realpath(os.path.join('/sys/class/block', name))
+	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
+		return None
+	part_file = os.path.join(sysfs_block_path, "partition")
+	if not os.path.exists(part_file):
+		return os.path.join('/dev', name) if is_block_device(os.path.join('/dev', name)) else None
+	parent = os.path.basename(os.path.dirname(sysfs_block_path))
+	return os.path.join('/dev', parent) if parent and parent != name else None
 
-def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, best_only=False, formated_only=False, show_zero_size_devices=False):
-		# Build UUID/LABEL maps and reverse maps for resolving mount "source"
-	uuid_map = build_symlink_map("/dev/disk/by-uuid")
-	label_map = build_symlink_map("/dev/disk/by-label")
-	uuid_rev = {v: k for k, v in uuid_map.items()}
-	label_rev = {v: k for k, v in label_map.items()}
+@cache_decorator
+def get_sector_size(sysfs_block_path):
+	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
+		return 512
+	if get_partition_parent_name(sysfs_block_path):
+		sysfs_block_path = os.path.join('/sys/class/block', os.path.basename(get_partition_parent_name(sysfs_block_path)))
+	sector_size = read_int(os.path.join(sysfs_block_path, "queue", "hw_sector_size"))
+	if sector_size is None:
+		sector_size = read_int(os.path.join(sysfs_block_path, "queue", "logical_block_size"))
+	return sector_size if sector_size else 512
 
-	# Mount info maps
-	by_majmin, by_devname, _ = parse_mountinfo_enhanced(uuid_rev, label_rev)
-
-	results = []
-	results_by_name = {}
-	df_stats_by_name = {}  # name -> (blocks, bavail)
-	parent_to_children = defaultdict(list)
-
-	sys_class_block = "/sys/class/block"
+def get_read_write_rate_throughput_iter(sysfs_block_path):
+	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
+		while True:
+			yield 0, 0
+	rx_path = os.path.join(sysfs_block_path, "stat")
+	start_time = time.monotonic()
+	sector_size = get_sector_size(sysfs_block_path)
+	previous_bytes_read = 0
+	previous_bytes_written = 0
 	try:
-		entries = sorted(os.listdir(sys_class_block))
+		with open(rx_path, "r", encoding="utf-8", errors="ignore") as f:
+			fields = f.read().strip().split()
+		if len(fields) < 7:
+			yield 0, 0
+		sectors_read = int(fields[2])
+		read_time = int(fields[3]) / 1000.0
+		sectors_written = int(fields[6])
+		write_time = int(fields[7]) / 1000.0
+		read_throughput = (sectors_read * sector_size) / read_time if read_time > 0 else 0
+		write_throughput = (sectors_written * sector_size) / write_time if write_time > 0 else 0
+		previous_bytes_read = sectors_read * sector_size
+		previous_bytes_written = sectors_written * sector_size
+		yield int(read_throughput), int(write_throughput)
 	except Exception:
-		entries = []
-
-	for name in entries:
-		block_path = os.path.join(sys_class_block, name)
-
-		devnode = os.path.join("/dev", name)
-		if not is_block_device(devnode):
-			pass
-
-		parent_name = get_partition_parent_name(name)
-		if parent_name:
-			parent_to_children[parent_name].append(name)
-
-		majmin_str = read_text(os.path.join(block_path, "dev"))
-		if not majmin_str or ":" not in majmin_str:
-			continue
+		yield 0, 0
+	while True:
 		try:
-			major, minor = majmin_str.split(":", 1)
-			major = int(major)
-			minor = int(minor)
+			with open(rx_path, "r", encoding="utf-8", errors="ignore") as f:
+				fields = f.read().strip().split()
+			if len(fields) < 7:
+				yield 0, 0
+			# fields: https://www.kernel.org/doc/html/latest/block/stat.html
+			# 0 - reads completed successfully
+			# 1 - reads merged
+			# 2 - sectors read
+			# 3 - time spent reading (ms)
+			# 4 - writes completed
+			# 5 - writes merged
+			# 6 - sectors written
+			# 7 - time spent writing (ms)
+			# 8 - I/Os currently in progress
+			# 9 - time spent doing I/Os (ms)
+			# 10 - weighted time spent doing I/Os (ms)
+			sectors_read = int(fields[2])
+			sectors_written = int(fields[6])
+			bytes_read = sectors_read * sector_size
+			bytes_written = sectors_written * sector_size
+			end_time = time.monotonic()
+			elapsed_time = end_time - start_time
+			start_time = end_time
+			read_throughput = (bytes_read - previous_bytes_read) / elapsed_time if elapsed_time > 0 else 0
+			write_throughput = (bytes_written - previous_bytes_written) / elapsed_time if elapsed_time > 0 else 0
+			previous_bytes_read = bytes_read
+			previous_bytes_written = bytes_written
+			yield int(read_throughput), int(write_throughput)
 		except Exception:
-			continue
+			yield 0, 0
 
-		sectors = read_int(os.path.join(block_path, "size")) or 0
-		lb_size = (
-			read_int(os.path.join(block_path, "queue", "logical_block_size")) or 512
-		)
-		size_bytes = sectors * lb_size
-		if not show_zero_size_devices and size_bytes == 0:
-			continue
-
-		parent_block_path = os.path.join(sys_class_block, parent_name) if parent_name else None
-		model, serial = read_model_and_serial(block_path)
-		parent_model, parent_serial = read_model_and_serial(parent_block_path)
-
-		# UUID/Label from by-uuid/by-label symlinks
-		
-		props = get_udev_props(major, minor=minor)
-		# Fallback to udev props
-		rec = {
-				"NAME": name,
-				"FSTYPE": props.get("ID_FS_TYPE"),
-				"LABEL": label_map.get(name, props.get("ID_FS_LABEL")),
-				"UUID": uuid_map.get(name, props.get("ID_FS_UUID")),
-				"MOUNTPOINT": None,
-				"MODEL": model if model else parent_model,
-				"SERIAL": serial if serial else parent_serial,
-				"DISCARD": bool(read_discard_support(block_path) or read_discard_support(parent_block_path)),
-				"SIZE": f"{format_bytes(size_bytes, to_int=print_bytes, use_1024_bytes=use_1024)}B",
-				"FSUSE%": None,
-				"SMART": 'N/A',
-		}
-		if SMARTCTL_PATH:
-			# if do not have read permission on the denode, set SMART to 'DENIED'
-			if not os.access(devnode, os.R_OK):
-				rec["SMART"] = 'DENIED'
+# DRIVE_INFO = namedtuple("DRIVE_INFO", 
+# 	["NAME", "FSTYPE", "SIZE", "FSUSEPCT", "MOUNTPOINT", "SMART","RTPT",'WTPT', "LABEL", "UUID", "MODEL", "SERIAL", "DISCARD"])
+def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, best_only=False, formated_only=False, show_zero_size_devices=False,pseudo=False,tptDict = {},full=False):
+	lsblk_result = multiCMD.run_command(f'lsblk -brnp -o NAME,SIZE,FSTYPE,UUID,LABEL',timeout=2,quiet=True,wait_for_return=False,return_object=True)
+	block_devices = get_blocks()
+	smart_infos = {}
+	for block_device in block_devices:
+		parent_name = get_partition_parent_name(block_device)
+		if parent_name:
+			if parent_name not in smart_infos:
+				smart_infos[parent_name] = multiCMD.run_command(f'{SMARTCTL_PATH} -H {parent_name}',timeout=2,quiet=True,wait_for_return=False,return_object=True)
+		if block_device not in tptDict:
+			sysfs_block_path = os.path.realpath(os.path.join('/sys/class/block', os.path.basename(block_device)))
+			tptDict[block_device] = get_read_write_rate_throughput_iter(sysfs_block_path)
+	mount_table = parseMount()
+	target_devices = set(block_devices)
+	if pseudo:
+		target_devices.update(mount_table.keys())
+	target_devices = sorted(target_devices)
+	uuid_dict = build_symlink_dict("/dev/disk/by-uuid")
+	label_dict = build_symlink_dict("/dev/disk/by-label")
+	fstype_dict = {}
+	size_dict = {}
+	lsblk_result.thread.join()
+	if lsblk_result.returncode == 0:
+		for line in lsblk_result.stdout:
+			lsblk_name, lsblk_size, lsblk_fstype, lsblk_uuid, lsblk_label = line.split(' ', 4)
+			# the label can be \x escaped, we need to decode it
+			lsblk_uuid = bytes(lsblk_uuid, "utf-8").decode("unicode_escape")
+			lsblk_fstype = bytes(lsblk_fstype, "utf-8").decode("unicode_escape")
+			lsblk_label = bytes(lsblk_label, "utf-8").decode("unicode_escape")
+			if lsblk_uuid:
+				uuid_dict[lsblk_name] = lsblk_uuid
+			if lsblk_fstype:
+				fstype_dict[lsblk_name] = lsblk_fstype
+			if lsblk_label:
+				label_dict[lsblk_name] = lsblk_label
 			try:
-				# run smartctl -H <device>
-				outputLines = subprocess.check_output([SMARTCTL_PATH, "-H", devnode], stderr=subprocess.STDOUT).decode().splitlines()
-				# Parse output for SMART status
-				for line in outputLines:
+				size_dict[lsblk_name] = int(lsblk_size)
+			except Exception:
+				pass
+	output = [["NAME", "FSTYPE", "SIZE", "FSUSE%", "MOUNTPOINT", "SMART", "LABEL", "UUID", "MODEL", "SERIAL", "DISCARD","RTPT",'WTPT']]
+	for device_name in target_devices:
+		if mounted_only and device_name not in mount_table:
+			continue
+		fstype = ''
+		size = ''
+		fsusepct = ''
+		mountpoint = ''
+		smart = ''
+		label = ''
+		uuid = ''
+		model = ''
+		serial = ''
+		discard = ''
+		rtpt = ''
+		wtpt = ''
+		# fstype, size, fsuse%, mountpoint, rtpt, wtpt, lable, uuid are partition specific
+		# smart, model, serial, discard are device specific, and only for block devices
+		# fstype, size, fsuse%, mountpoint does not require block device and can have multiple values per device
+		if is_block_device(device_name):
+			parent_name = get_partition_parent_name(device_name)
+			parent_sysfs_path = os.path.realpath(os.path.join('/sys/class/block', os.path.basename(parent_name))) if parent_name else None
+			model, serial = read_model_and_serial(parent_sysfs_path)
+			discard = read_discard_support(parent_sysfs_path)
+			if parent_name in smart_infos and SMARTCTL_PATH:
+				smart_info_obj = smart_infos[parent_name]
+				smart_info_obj.thread.join()
+				for line in smart_info_obj.stdout:
 					line = line.lower()
 					if "health" in line:
 						smartinfo = line.rpartition(':')[2].strip().upper()
-						rec["SMART"] = smartinfo.replace('PASSED', 'OK')
-			except:
-				pass
-		# Mount and fstype: try maj:min first, then by resolved devname
-		mounts = by_majmin.get(majmin_str, [])
-		if not mounts:
-			mounts = by_devname.get(name, [])
+						smart = smartinfo.replace('PASSED', 'OK')
+						break
+					elif "denied" in line:
+						smart = 'DENIED'
+						break
+		if device_name in tptDict:
+			try:
+				rtpt, wtpt = next(tptDict[device_name])
+				if print_bytes:
+					rtpt = str(rtpt)
+					wtpt = str(wtpt)
+				else:
+					rtpt = multiCMD.format_bytes(rtpt, use_1024_bytes=use_1024, to_str=True,str_format='.1f') + 'B/s'
+					wtpt = multiCMD.format_bytes(wtpt, use_1024_bytes=use_1024, to_str=True,str_format='.1f') + 'B/s'
+			except Exception:
+				rtpt = ''
+				wtpt = ''
+		if device_name in label_dict:
+			label = label_dict[device_name]
+		if device_name in uuid_dict:
+			uuid = uuid_dict[device_name]
+		mount_points = mount_table.get(device_name, [])
 		if best_only:
-			mounts = [choose_mount_for_dev(name, mounts)] if mounts else []
-		if not mounted_only and not mounts:
-			if formated_only and not rec.get("FSTYPE"):
+			if mount_points:
+				mount_points = [sorted(mount_points, key=lambda x: len(x.MOUNTPOINT))[0]]
+		if mount_points:
+			for mount_entry in mount_points:
+				fstype = mount_entry.FSTYPE
+				if formated_only and not fstype:
+					continue
+				mountpoint = mount_entry.MOUNTPOINT
+				size_bytes, used_bytes = get_statvfs_use_size(mountpoint)
+				if size_bytes == 0 and not show_zero_size_devices:
+					continue
+				fsusepct = f"{int(round(100.0 * used_bytes / size_bytes))}%" if size_bytes > 0 else "N/A"
+				if print_bytes:
+					size = str(size_bytes)
+				else:
+					size = multiCMD.format_bytes(size_bytes, use_1024_bytes=use_1024, to_str=True) + 'B'
+				if not full:
+					device_name = device_name.lstrip('/dev/')
+				output.append([device_name, fstype, size, fsusepct, mountpoint, smart, label, uuid, model, serial, discard, rtpt, wtpt])
+		else:
+			if formated_only and device_name not in fstype_dict:
 				continue
-			results.append(rec)
-			results_by_name[name] = rec
-		for mount in mounts:
-			rec = rec.copy()
-			mountpoint = mount.get("MOUNTPOINT")
-			if mount.get("FSTYPE"):
-				rec["FSTYPE"] = mount.get("FSTYPE")
-			if formated_only and not rec.get("FSTYPE"):
+			fstype = fstype_dict.get(device_name, '')
+			size_bytes = size_dict.get(device_name, 0)
+			if size_bytes == 0 and not show_zero_size_devices:
 				continue
-			# Use% via statvfs and collect raw stats for aggregation
-			if mountpoint:
-				try:
-					st = os.statvfs(mountpoint)
-					if st.f_blocks > 0:
-						use_pct = 100.0 * (1.0 - (st.f_bavail / float(st.f_blocks)))
-						rec["FSUSE%"] = f'{use_pct:.1f}%'
-						df_stats_by_name[name] = (st.f_blocks, st.f_bavail)
-				except Exception:
-					pass
-			rec["MOUNTPOINT"] = mountpoint
-			results.append(rec)
-			results_by_name[name] = rec
+			if print_bytes:
+				size = str(size_bytes)
+			else:
+				size = multiCMD.format_bytes(size_bytes, use_1024_bytes=use_1024, to_str=True) + 'B'
+			if not full:
+				device_name = device_name.lstrip('/dev/')
+			output.append([device_name, fstype, size, fsusepct, mountpoint, smart, label, uuid, model, serial, discard, rtpt, wtpt])
+	return output
 
-	# Aggregate use% for parent devices with partitions:
-	# parent's use% = 1 - sum(bavail)/sum(blocks) over mounted partitions
-	for parent, children in parent_to_children.items():
-		sum_blocks = 0
-		sum_bavail = 0
-		for ch in children:
-			vals = df_stats_by_name.get(ch)
-			if not vals:
-				continue
-			b, ba = vals
-			if b and b > 0:
-				sum_blocks += b
-				sum_bavail += ba if ba is not None else 0
-		if sum_blocks > 0 and parent in results_by_name:
-			pct = 100.0 * (1.0 - (sum_bavail / float(sum_blocks)))
-			results_by_name[parent]["FSUSE%"] = f'{pct:.1f}%'
-
-	results.sort(key=lambda x: x["NAME"])  # type: ignore
-	return results
 
 def main():
 	parser = argparse.ArgumentParser(description="Gather disk and partition info for block devices.")
@@ -561,19 +407,32 @@ def main():
 	parser.add_argument('-H','--si', help="Use powers of 1000 not 1024 for SIZE column", action="store_true")
 	parser.add_argument('-F','-fo','--formated_only', help="Show only formated filesystems", action="store_true")
 	parser.add_argument('-M','-mo','--mounted_only', help="Show only mounted filesystems", action="store_true")
-	parser.add_argument('-B','-bo','--best_only', help="Show only best mount for each device", action="store_true")
+	parser.add_argument('-B','-bo','--best_only', help="Show only shortest mount point for each device", action="store_true")
+	parser.add_argument('-a','--full', help="Show full device information, do not collapse drive info when length > console length", action="store_true")
+	parser.add_argument('-P','--pseudo', help="Include pseudo file systems as well (tmpfs / nfs / cifs etc.)", action="store_true")
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")
+	parser.add_argument('print_period', nargs='?', default=0, type=int, help="If specified as a number, repeat the output every N seconds")
 	parser.add_argument('-V', '--version', action='version', version=f"%(prog)s {version} @ {COMMIT_DATE} stat drives by pan@zopyr.us")
 
 	args = parser.parse_args()
-	results = get_drives_info(print_bytes = args.bytes, use_1024 = not args.si, 
-						   mounted_only=args.mounted_only, best_only=args.best_only, 
-						   formated_only=args.formated_only, show_zero_size_devices=args.show_zero_size_devices)
-	if args.json:
-		import json
-		print(json.dumps(results, indent=1))
-	else:
-		print(pretty_format_table(results))
+	tptDict = {}
+	while True:
+		results = get_drives_info(print_bytes = args.bytes, use_1024 = not args.si, 
+							mounted_only=args.mounted_only, best_only=args.best_only, 
+							formated_only=args.formated_only, show_zero_size_devices=args.show_zero_size_devices,
+							pseudo=args.pseudo,tptDict=tptDict,full=args.full)
+		if args.json:
+			import json
+			print(json.dumps(results, indent=1))
+		else:
+			print(multiCMD.pretty_format_table(results,full=args.full))
+		if args.print_period > 0:
+			try:
+				time.sleep(args.print_period)
+			except KeyboardInterrupt:
+				break
+		else:
+			break
 
 
 if __name__ == "__main__":
