@@ -13,8 +13,8 @@ import shutil
 import subprocess
 try:
 	import multiCMD
-	assert float(multiCMD.version) > 1.35
-except ImportError:
+	assert float(multiCMD.version) >= 1.35
+except:
 	import time,threading,io,sys,subprocess,select,string,re,itertools,signal
 	class multiCMD:
 		version='1.35_min_statblk'
@@ -276,7 +276,7 @@ except :
 	def cache_decorator(func):
 		return func
 
-version = '1.20'
+version = '1.21'
 VERSION = version
 __version__ = version
 COMMIT_DATE = '2025-09-10'
