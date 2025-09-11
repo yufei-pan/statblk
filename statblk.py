@@ -276,7 +276,7 @@ except :
 	def cache_decorator(func):
 		return func
 
-version = '1.24'
+version = '1.25'
 VERSION = version
 __version__ = version
 COMMIT_DATE = '2025-09-10'
@@ -592,8 +592,8 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 					rtpt = str(rtpt)
 					wtpt = str(wtpt)
 				else:
-					rtpt = multiCMD.format_bytes(rtpt, use_1024_bytes=use_1024, to_str=True,str_format='.1f') + 'B/s'
-					wtpt = multiCMD.format_bytes(wtpt, use_1024_bytes=use_1024, to_str=True,str_format='.1f') + 'B/s'
+					rtpt = multiCMD.format_bytes(rtpt, use_1024_bytes=use_1024, to_str=True,str_format='.0f') + 'B/s'
+					wtpt = multiCMD.format_bytes(wtpt, use_1024_bytes=use_1024, to_str=True,str_format='.0f') + 'B/s'
 			except Exception:
 				rtpt = ''
 				wtpt = ''
