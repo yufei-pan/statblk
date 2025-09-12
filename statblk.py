@@ -10,11 +10,11 @@ import shutil
 import subprocess
 try:
 	import multiCMD
-	assert float(multiCMD.version) >= 1.35
+	assert float(multiCMD.version) >= 1.37
 except:
 	import time,threading,io,sys,subprocess,select,string,re,itertools,signal
 	class multiCMD:
-		version='1.35_min_statblk'
+		version='1.37_min_statblk'
 		__version__=version
 		COMMIT_DATE='2025-09-10'
 		__running_threads=set()
@@ -165,7 +165,7 @@ except:
 				E=A
 			def V(hdr,rows_):
 				B=hdr;C=[0]*len(B)
-				for A in range(len(B)):C[A]=max(J(B[A]),*(J(B[A])for B in rows_ if A<len(B)))
+				for A in range(len(B)):C[A]=max(0,J(B[A]),*(J(B[A])for B in rows_ if A<len(B)))
 				return C
 			P=[]
 			for F in E:
@@ -277,7 +277,7 @@ except :
 	def cache_decorator(func):
 		return func
 
-version = '1.28'
+version = '1.29'
 VERSION = version
 __version__ = version
 COMMIT_DATE = '2025-09-11'
@@ -537,7 +537,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			if parent_name:
 				if parent_name not in smart_infos:
 					smart_infos[parent_name] = multiCMD.run_command(f'{SMARTCTL_PATH} -H {parent_name}',timeout=2,quiet=True,wait_for_return=False,return_object=True)
-		if ('READ' in output_fields_set or 'WRITE' in output_fields_set) and block_device not in tptDict:
+		if block_device not in tptDict:
 			sysfs_block_path = os.path.join('/sys/class/block', os.path.basename(block_device))
 			tptDict[block_device] = get_read_write_rate_throughput_iter(sysfs_block_path)
 	mount_table = parseMount()
