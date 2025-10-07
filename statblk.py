@@ -277,10 +277,10 @@ except :
 	def cache_decorator(func):
 		return func
 
-version = '1.29'
+version = '1.30'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2025-09-11'
+COMMIT_DATE = '2025-10-06'
 
 SMARTCTL_PATH = shutil.which("smartctl")
 
@@ -688,9 +688,9 @@ def main():
 							pseudo=args.pseudo,tptDict=tptDict,full=args.full,active_only=args.active_only,output=args.output,exclude=args.exclude)
 		if args.json:
 			import json
-			print(json.dumps(results, indent=1))
+			print(json.dumps(results, indent=1),flush=True)
 		else:
-			print(multiCMD.pretty_format_table(results,full=args.full))
+			print(multiCMD.pretty_format_table(results,full=args.full),flush=True)
 		if args.print_period > 0:
 			try:
 				time.sleep(args.print_period)
