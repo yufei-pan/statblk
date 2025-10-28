@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 # requires-python = ">=3.6"
 # -*- coding: utf-8 -*-
-import os
-import stat
-from collections import defaultdict, namedtuple
 import argparse
+import os
+import re
 import shutil
+import stat
 import time
+from collections import defaultdict, namedtuple
+
 try:
 	import multiCMD
 	assert float(multiCMD.version) >= 1.37
 except Exception:
-	import types
 	import sys
+	import types
 	multiCMD = types.ModuleType('multiCMD')
 	sys.modules['multiCMD'] = multiCMD
 	_src  = r'''
@@ -283,10 +285,10 @@ except Exception:
 	def cache_decorator(func):
 		return func
 
-version = '1.31'
+version = '1.32'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2025-10-20'
+COMMIT_DATE = '2025-10-27'
 
 SMARTCTL_PATH = shutil.which("smartctl")
 
@@ -384,9 +386,9 @@ def read_model_and_serial(sysfs_block_path):
 
 def read_size(sysfs_block_path):# -> tuple[int | None, Any] | Literal['']:
 	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
-		return ''
-	size = read_int(os.path.join(sysfs_block_path, "size"))
-	return size
+		return 0
+	sectors = read_int(os.path.join(sysfs_block_path, "size"))
+	return sectors * 512 # linux kernel uses 512 byte sectors
 
 MountEntry = namedtuple("MountEntry", ["MOUNTPOINT", "FSTYPE", "OPTIONS"])
 def parseMount():
@@ -512,7 +514,8 @@ ALL_OUTPUT_FIELDS = ["NAME", "FSTYPE", "SIZE", "FSUSE%", "MOUNTPOINT", "SMART", 
 # 	["NAME", "FSTYPE", "SIZE", "FSUSEPCT", "MOUNTPOINT", "SMART","RTPT",'WTPT', "LABEL", "UUID", "MODEL", "SERIAL", "DISCARD"])
 def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, best_only=False, 
 					formated_only=False, show_zero_size_devices=False,pseudo=False,tptDict = {},
-					full=False,active_only=False,output="all",exclude=""):
+					full=False,active_only=False,output="all",exclude="",
+					filter_patterns=None,invert_match=False,match_devname_only=False):
 	global SMARTCTL_PATH
 	global ALL_OUTPUT_FIELDS
 	if output == "all":
@@ -550,6 +553,14 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	target_devices = set(block_devices)
 	if pseudo:
 		target_devices.update(mount_table.keys())
+	if filter_patterns and match_devname_only:
+		pattern = re.compile('|'.join(filter_patterns))
+		filtered_devices = set()
+		for device in target_devices:
+			match = pattern.search(device)
+			if (match and not invert_match) or (not match and invert_match):
+				filtered_devices.add(device)
+		target_devices = filtered_devices
 	target_devices = sorted(target_devices)
 	uuid_dict = {}
 	if 'UUID' in output_fields_set:
@@ -613,7 +624,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 					elif "denied" in line:
 						device_properties['SMART'] = 'DENIED'
 						break
-			size_bytes = read_size(os.path.join('/sys/class/block', os.path.basename(device_name)))
+			#size_bytes = read_size(os.path.join('/sys/class/block', os.path.basename(device_name)))
 		if device_name in tptDict:
 			try:
 				device_properties['READ'], device_properties['WRITE'] = next(tptDict[device_name])
@@ -655,8 +666,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			if formated_only and device_name not in fstype_dict:
 				continue
 			device_properties['FSTYPE'] = fstype_dict.get(device_name, '')
-			if not size_bytes:
-				size_bytes = size_dict.get(device_name, 0)
+			size_bytes = size_dict.get(device_name, read_size(os.path.join('/sys/class/block', os.path.basename(device_name))))
 			if size_bytes == 0 and not show_zero_size_devices:
 				continue
 			if print_bytes:
@@ -665,6 +675,18 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 				device_properties['SIZE'] = multiCMD.format_bytes(size_bytes, use_1024_bytes=use_1024, to_str=True) + 'B'
 			output_list.append([device_properties[output_field] for output_field in output_fields])
 		multiCMD.join_threads()
+	if not match_devname_only:
+		if filter_patterns:
+			pattern = re.compile('|'.join(filter_patterns))
+			filtered_output_list = [output_list[0]]  # include header
+			for row in output_list[1:]:
+				match = any(pattern.search(field) for field in row)
+				if (match and not invert_match) or (not match and invert_match):
+					filtered_output_list.append(row)
+			output_list = filtered_output_list
+		elif invert_match:
+			# if no patterns but invert_match is set, return only header
+			output_list = [output_list[0]]
 	return output_list
 
 
@@ -682,16 +704,28 @@ def main():
 	parser.add_argument('-o','--output', help="Specify which output columns to print.Use comma to separate columns. default: all available", default="all", type=str)
 	parser.add_argument('-x','--exclude', help="Specify which output columns to exclude.Use comma to separate columns. default: none", default="", type=str)
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")
-	parser.add_argument('print_period', nargs='?', default=0, type=int, help="If specified as a number, repeat the output every N seconds")
+	parser.add_argument('-D','--match_devname_only', help="Change filter pattern to match just the device names instead of the full line", action="store_true")
+	parser.add_argument('-v','--invert_match', help="Invert the filter match", action="store_true")
+	parser.add_argument('filter_patterns', nargs='*', help="Filter pattern(s) to match (e.g., sda, nvme0n1p1, btrfs). If specified, only devices matching any of the patterns will be shown. Will prioritize print_period first thus if wanting to filter a number and do not repeat, append a 0 (zero) at the end.")
+	parser.add_argument('print_period', nargs='?', default=0, type=int, help="If specified as a non zero number, repeat the output every N seconds")
 	parser.add_argument('-V', '--version', action='version', version=f"%(prog)s {version} @ {COMMIT_DATE} stat drives by pan@zopyr.us")
 
 	args = parser.parse_args()
 	tptDict = {}
+	if not args.print_period:
+		if args.filter_patterns:
+			try:
+				args.print_period = int(args.filter_patterns[-1])
+				args.filter_patterns = args.filter_patterns[:-1]
+			except Exception:
+				pass
 	while True:
 		results = get_drives_info(print_bytes = args.bytes, use_1024 = not args.si, 
 							mounted_only=args.mounted_only, best_only=args.best_only, 
 							formated_only=args.formated_only, show_zero_size_devices=args.show_zero_size_devices,
-							pseudo=args.pseudo,tptDict=tptDict,full=args.full,active_only=args.active_only,output=args.output,exclude=args.exclude)
+							pseudo=args.pseudo,tptDict=tptDict,full=args.full,active_only=args.active_only,
+							output=args.output,exclude=args.exclude,
+							filter_patterns=args.filter_patterns,invert_match=args.invert_match,match_devname_only=args.match_devname_only)
 		if args.json:
 			import json
 			print(json.dumps(results, indent=1),flush=True)
