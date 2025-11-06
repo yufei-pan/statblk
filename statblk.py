@@ -10,7 +10,7 @@ import time
 from collections import defaultdict, namedtuple
 
 try:
-	import multiCMD
+	import multiCMD  # type: ignore
 	assert float(multiCMD.version) >= 1.37
 except Exception:
 	import sys
@@ -285,10 +285,10 @@ except Exception:
 	def cache_decorator(func):
 		return func
 
-version = '1.32'
+version = '1.33'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2025-10-27'
+COMMIT_DATE = '2025-11-04'
 
 SMARTCTL_PATH = shutil.which("smartctl")
 
@@ -515,7 +515,7 @@ ALL_OUTPUT_FIELDS = ["NAME", "FSTYPE", "SIZE", "FSUSE%", "MOUNTPOINT", "SMART", 
 def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, best_only=False, 
 					formated_only=False, show_zero_size_devices=False,pseudo=False,tptDict = {},
 					full=False,active_only=False,output="all",exclude="",
-					filter_patterns=None,invert_match=False,match_devname_only=False):
+					filter_patterns=None,invert_match=False,match_devname_only=False,timeout=None):
 	global SMARTCTL_PATH
 	global ALL_OUTPUT_FIELDS
 	if output == "all":
@@ -537,7 +537,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	output_list = [output_fields]
 	output_fields_set = set(output_fields)
 	if {'SIZE','FSTYPE','UUID','LABEL'}.intersection(output_fields_set):
-		lsblk_result = multiCMD.run_command('lsblk -brnp -o NAME,SIZE,FSTYPE,UUID,LABEL',timeout=2,quiet=True,wait_for_return=False,return_object=True)
+		lsblk_result = multiCMD.run_command('lsblk -brnp -o NAME,SIZE,FSTYPE,UUID,LABEL',timeout=timeout,quiet=True,wait_for_return=False,return_object=True)
 	block_devices = get_blocks()
 	smart_infos = {}
 	for block_device in block_devices:
@@ -545,8 +545,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			parent_name = get_partition_parent_name(block_device)
 			if parent_name:
 				if parent_name not in smart_infos:
-					smart_infos[parent_name] = multiCMD.run_command(f'{SMARTCTL_PATH} -H {parent_name}',timeout=2,quiet=True,wait_for_return=False,return_object=True)
-		if block_device not in tptDict:
+					smart_infos[parent_name] = multiCMD.run_command(f'{SMARTCTL_PATH} -H {parent_name}',timeout=timeout,quiet=True,wait_for_return=False,return_object=True)
 			sysfs_block_path = os.path.join('/sys/class/block', os.path.basename(block_device))
 			tptDict[block_device] = get_read_write_rate_throughput_iter(sysfs_block_path)
 	mount_table = parseMount()
@@ -674,7 +673,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			else:
 				device_properties['SIZE'] = multiCMD.format_bytes(size_bytes, use_1024_bytes=use_1024, to_str=True) + 'B'
 			output_list.append([device_properties[output_field] for output_field in output_fields])
-		multiCMD.join_threads()
+		multiCMD.join_threads(timeout=timeout)
 	if not match_devname_only:
 		if filter_patterns:
 			pattern = re.compile('|'.join(filter_patterns))
@@ -703,6 +702,7 @@ def main():
 	parser.add_argument('-P','--pseudo', help="Include pseudo file systems as well (tmpfs / nfs / cifs etc.)", action="store_true")
 	parser.add_argument('-o','--output', help="Specify which output columns to print.Use comma to separate columns. default: all available", default="all", type=str)
 	parser.add_argument('-x','--exclude', help="Specify which output columns to exclude.Use comma to separate columns. default: none", default="", type=str)
+	parser.add_argument('-t','--timeout', help="Set command timeout in seconds (default: 2)", default=2, type=int)
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")
 	parser.add_argument('-D','--match_devname_only', help="Change filter pattern to match just the device names instead of the full line", action="store_true")
 	parser.add_argument('-v','--invert_match', help="Invert the filter match", action="store_true")
@@ -725,7 +725,9 @@ def main():
 							formated_only=args.formated_only, show_zero_size_devices=args.show_zero_size_devices,
 							pseudo=args.pseudo,tptDict=tptDict,full=args.full,active_only=args.active_only,
 							output=args.output,exclude=args.exclude,
-							filter_patterns=args.filter_patterns,invert_match=args.invert_match,match_devname_only=args.match_devname_only)
+							filter_patterns=args.filter_patterns,invert_match=args.invert_match,match_devname_only=args.match_devname_only,
+							timeout=args.timeout,
+							)
 		if args.json:
 			import json
 			print(json.dumps(results, indent=1),flush=True)
