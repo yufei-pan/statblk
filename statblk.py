@@ -285,10 +285,10 @@ except Exception:
 	def cache_decorator(func):
 		return func
 
-version = '1.33'
+version = '1.34'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2025-11-04'
+COMMIT_DATE = '2025-11-13'
 
 SMARTCTL_PATH = shutil.which("smartctl")
 
@@ -546,6 +546,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			if parent_name:
 				if parent_name not in smart_infos:
 					smart_infos[parent_name] = multiCMD.run_command(f'{SMARTCTL_PATH} -H {parent_name}',timeout=timeout,quiet=True,wait_for_return=False,return_object=True)
+		if block_device not in tptDict:
 			sysfs_block_path = os.path.join('/sys/class/block', os.path.basename(block_device))
 			tptDict[block_device] = get_read_write_rate_throughput_iter(sysfs_block_path)
 	mount_table = parseMount()
