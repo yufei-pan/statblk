@@ -60,10 +60,10 @@ except Exception:
 	def cache_decorator(func):
 		return func
 
-version = '1.34'
+version = '1.35'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2025-11-13'
+COMMIT_DATE = '2025-12-01'
 
 SMARTCTL_PATH = shutil.which("smartctl")
 
