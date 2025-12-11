@@ -60,10 +60,10 @@ except Exception:
 	def cache_decorator(func):
 		return func
 
-version = '1.35'
+version = '1.36'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2025-12-01'
+COMMIT_DATE = '2025-12-11'
 
 SMARTCTL_PATH = shutil.which("smartctl")
 
@@ -512,6 +512,7 @@ def main():
 		if args.print_period > 0:
 			try:
 				time.sleep(args.print_period)
+				args.active_only = True
 			except KeyboardInterrupt:
 				break
 		else:
