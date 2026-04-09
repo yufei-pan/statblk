@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import stat
+import sys
 import time
 from collections import defaultdict, namedtuple
 
@@ -125,12 +126,14 @@ except Exception:
 	def cache_decorator(func):
 		return func
 
-version = '1.37'
+version = '1.38'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2025-12-16'
+COMMIT_DATE = '2026-04-07'
 
 SMARTCTL_PATH = shutil.which("smartctl")
+DISKUTIL_PATH = shutil.which("diskutil")
+IS_DARWIN = (sys.platform == "darwin")
 
 def read_text(path):
 	try:
@@ -168,6 +171,69 @@ def build_symlink_dict(dir_path):
 	except Exception:
 		pass
 	return mapping
+
+def parse_bytes_from_diskutil_size(value):
+	if not value:
+		return 0
+	match = re.search(r"\((\d+)\s+Bytes\)", value)
+	if match:
+		try:
+			return int(match.group(1))
+		except Exception:
+			return 0
+	return 0
+
+@cache_decorator
+def get_macos_diskutil_info(timeout=4):
+	"""
+	Build map: /dev/diskXsY -> info from `diskutil info -all`.
+	Only used on macOS.
+	"""
+	if not IS_DARWIN or not DISKUTIL_PATH:
+		return {}
+	info_map = {}
+	current = {}
+	rtn = multiCMD.run_command(f"{DISKUTIL_PATH} info -all", timeout=timeout, quiet=True)
+	for raw_line in rtn + [""]:
+		line = raw_line.rstrip("\n")
+		if not line.strip():
+			devnode = current.get("Device Node", "").strip()
+			if devnode:
+				size_bytes = parse_bytes_from_diskutil_size(current.get("Disk Size", ""))
+				if size_bytes == 0:
+					size_bytes = parse_bytes_from_diskutil_size(current.get("Volume Total Space", ""))
+				model = (current.get("Device / Media Name") or current.get("Media Name") or "").strip()
+				serial = (current.get("Serial Number") or "").strip()
+				fstype = (current.get("File System Personality") or "").strip()
+				label = (current.get("Volume Name") or "").strip()
+				uuid = (
+					current.get("Volume UUID")
+					or current.get("Disk / Partition UUID")
+					or current.get("APFS Volume Disk (Role)")
+					or ""
+				).strip()
+				solid_state = (current.get("Solid State") or "").strip().lower()
+				if solid_state == "yes":
+					discard = "Yes"
+				elif solid_state == "no":
+					discard = "No"
+				else:
+					discard = "N/A"
+				info_map[devnode] = {
+					"SIZE_BYTES": size_bytes,
+					"FSTYPE": fstype,
+					"UUID": uuid,
+					"LABEL": label,
+					"MODEL": model,
+					"SERIAL": serial,
+					"DISCARD": discard,
+				}
+			current = {}
+			continue
+		if ":" in line:
+			key, value = line.split(":", 1)
+			current[key.strip()] = value.strip()
+	return info_map
 
 def get_statvfs_use_size(mountpoint):
 	try:
@@ -235,17 +301,39 @@ def parseMount():
 	rtn = multiCMD.run_command('mount',timeout=1,quiet=True)
 	mount_table = defaultdict(list)
 	for line in rtn:
-		device_name, _, line = line.partition(' on ')
-		if device_name.startswith(os.path.sep):
-			device_name = os.path.realpath(device_name)
-		mount_point, _, line = line.partition(' type ')
-		fstype, _ , options = line.partition(' (')
-		options = options.rstrip(')').split(',')
+		if IS_DARWIN:
+			# macOS format example: /dev/disk3s1s1 on / (apfs, local, read-only, journaled)
+			match = re.match(r"^(\S+)\s+on\s+(.+?)\s+\((.*)\)$", line)
+			if not match:
+				continue
+			device_name = match.group(1)
+			if device_name.startswith(os.path.sep):
+				device_name = os.path.realpath(device_name)
+			mount_point = match.group(2)
+			options = [x.strip() for x in match.group(3).split(",") if x.strip()]
+			fstype = options[0] if options else ""
+		else:
+			device_name, _, line = line.partition(' on ')
+			if device_name.startswith(os.path.sep):
+				device_name = os.path.realpath(device_name)
+			mount_point, _, line = line.partition(' type ')
+			fstype, _ , options = line.partition(' (')
+			options = options.rstrip(')').split(',')
 		mount_table[device_name].append(MountEntry(mount_point, fstype, options))
 	return mount_table
 
 def get_blocks():
-	# get entries in /sys/class/block
+	if IS_DARWIN:
+		# On macOS, enumerate /dev/disk* and /dev/disk*s* nodes.
+		block_devices = []
+		try:
+			for entry in os.listdir("/dev"):
+				if re.match(r"^disk\d+(s\d+)?$", entry):
+					block_devices.append(f"/dev/{entry}")
+		except Exception:
+			pass
+		return sorted(block_devices)
+	# Linux: get entries in /sys/class/block
 	block_devices = []
 	for entry in os.listdir("/sys/class/block"):
 		if os.path.isdir(os.path.join("/sys/class/block", entry)):
@@ -270,6 +358,13 @@ def get_partition_parent_name(name):
 	if not name:
 		return None
 	name = os.path.basename(name)
+	if IS_DARWIN:
+		match = re.match(r"^(disk\d+)s\d+$", name)
+		if match:
+			parent = os.path.join("/dev", match.group(1))
+			return parent if is_block_device(parent) else None
+		dev = os.path.join("/dev", name)
+		return dev if is_block_device(dev) else None
 	sysfs_block_path = os.path.realpath(os.path.join('/sys/class/block', name))
 	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
 		return None
@@ -281,6 +376,8 @@ def get_partition_parent_name(name):
 
 @cache_decorator
 def get_sector_size(sysfs_block_path):
+	if IS_DARWIN:
+		return 512
 	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
 		return 512
 	if get_partition_parent_name(sysfs_block_path):
@@ -291,6 +388,10 @@ def get_sector_size(sysfs_block_path):
 	return sector_size if sector_size else 512
 
 def get_read_write_rate_throughput_iter(sysfs_block_path):
+	if IS_DARWIN:
+		# Per-device throughput is Linux /sys stat based; return zeros on macOS.
+		while True:
+			yield 0, 0
 	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
 		while True:
 			yield 0, 0
@@ -376,7 +477,10 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 		return []
 	output_list = [output_fields]
 	output_fields_set = set(output_fields)
-	if {'SIZE','FSTYPE','UUID','LABEL'}.intersection(output_fields_set):
+	macos_info = {}
+	if IS_DARWIN and {'SIZE','FSTYPE','UUID','LABEL','MODEL','SERIAL','DISCARD'}.intersection(output_fields_set):
+		macos_info = get_macos_diskutil_info(timeout=timeout if timeout else 4)
+	if (not IS_DARWIN) and {'SIZE','FSTYPE','UUID','LABEL'}.intersection(output_fields_set):
 		lsblk_result = multiCMD.run_command('lsblk -brnp -o NAME,SIZE,FSTYPE,UUID,LABEL',timeout=timeout,quiet=True,wait_for_return=False,return_object=True)
 	block_devices = get_blocks()
 	smart_infos = {}
@@ -387,8 +491,11 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 				if parent_name not in smart_infos:
 					smart_infos[parent_name] = multiCMD.run_command(f'{SMARTCTL_PATH} -H {parent_name}',timeout=timeout,quiet=True,wait_for_return=False,return_object=True)
 		if block_device not in tptDict:
-			sysfs_block_path = os.path.join('/sys/class/block', os.path.basename(block_device))
-			tptDict[block_device] = get_read_write_rate_throughput_iter(sysfs_block_path)
+			if IS_DARWIN:
+				tptDict[block_device] = get_read_write_rate_throughput_iter(block_device)
+			else:
+				sysfs_block_path = os.path.join('/sys/class/block', os.path.basename(block_device))
+				tptDict[block_device] = get_read_write_rate_throughput_iter(sysfs_block_path)
 	mount_table = parseMount()
 	target_devices = set(block_devices)
 	if pseudo:
@@ -410,7 +517,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 		label_dict = build_symlink_dict("/dev/disk/by-label")
 	fstype_dict = {}
 	size_dict = {}
-	if {'SIZE','FSTYPE','UUID','LABEL'}.intersection(output_fields_set):
+	if (not IS_DARWIN) and {'SIZE','FSTYPE','UUID','LABEL'}.intersection(output_fields_set):
 		lsblk_result.thread.join()
 		if lsblk_result.returncode == 0:
 			for line in lsblk_result.stdout:
@@ -435,6 +542,16 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 						size_dict[lsblk_name] = int(lsblk_size)
 					except Exception:
 						pass
+	if IS_DARWIN:
+		for devname, info in macos_info.items():
+			if 'UUID' in output_fields_set and info.get('UUID'):
+				uuid_dict[devname] = info['UUID']
+			if 'FSTYPE' in output_fields_set and info.get('FSTYPE'):
+				fstype_dict[devname] = info['FSTYPE']
+			if 'LABEL' in output_fields_set and info.get('LABEL'):
+				label_dict[devname] = info['LABEL']
+			if 'SIZE' in output_fields_set and info.get('SIZE_BYTES'):
+				size_dict[devname] = info['SIZE_BYTES']
 	for device_name in target_devices:
 		if mounted_only and device_name not in mount_table:
 			continue
@@ -447,11 +564,21 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 		# fstype, size, fsuse%, mountpoint does not require block device and can have multiple values per device
 		if is_block_device(device_name):
 			parent_name = get_partition_parent_name(device_name)
-			parent_sysfs_path = os.path.realpath(os.path.join('/sys/class/block', os.path.basename(parent_name))) if parent_name else None
 			if 'MODEL' in output_fields_set or 'SERIAL' in output_fields_set:
-				device_properties['MODEL'], device_properties['SERIAL'] = read_model_and_serial(parent_sysfs_path)
+				if IS_DARWIN:
+					di = macos_info.get(parent_name or device_name, {})
+					device_properties['MODEL'] = di.get('MODEL', '')
+					device_properties['SERIAL'] = di.get('SERIAL', '')
+				else:
+					parent_sysfs_path = os.path.realpath(os.path.join('/sys/class/block', os.path.basename(parent_name))) if parent_name else None
+					device_properties['MODEL'], device_properties['SERIAL'] = read_model_and_serial(parent_sysfs_path)
 			if 'DISCARD' in output_fields_set:
-				device_properties['DISCARD'] = read_discard_support(parent_sysfs_path)
+				if IS_DARWIN:
+					di = macos_info.get(parent_name or device_name, {})
+					device_properties['DISCARD'] = di.get('DISCARD', 'N/A')
+				else:
+					parent_sysfs_path = os.path.realpath(os.path.join('/sys/class/block', os.path.basename(parent_name))) if parent_name else None
+					device_properties['DISCARD'] = read_discard_support(parent_sysfs_path)
 			if parent_name in smart_infos and SMARTCTL_PATH:
 				smart_info_obj = smart_infos[parent_name]
 				smart_info_obj.thread.join()
@@ -506,7 +633,10 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			if formated_only and device_name not in fstype_dict:
 				continue
 			device_properties['FSTYPE'] = fstype_dict.get(device_name, '')
-			size_bytes = size_dict.get(device_name, read_size(os.path.join('/sys/class/block', os.path.basename(device_name))))
+			if IS_DARWIN:
+				size_bytes = size_dict.get(device_name, macos_info.get(device_name, {}).get('SIZE_BYTES', 0))
+			else:
+				size_bytes = size_dict.get(device_name, read_size(os.path.join('/sys/class/block', os.path.basename(device_name))))
 			if size_bytes == 0 and not show_zero_size_devices:
 				continue
 			if print_bytes:
