@@ -18,7 +18,13 @@ setup(
     },
     install_requires=[
         'multiCMD>=1.35',
+        'argparse',
     ],
+    extras_require={
+        'completion': [
+            'argcomplete',
+        ],
+    },
     classifiers=[
         'Programming Language :: Python :: 3',
         'Operating System :: POSIX :: Linux',

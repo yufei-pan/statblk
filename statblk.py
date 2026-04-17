@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# PYTHON_ARGCOMPLETE_OK
 # requires-python = ">=3.6"
 # -*- coding: utf-8 -*-
 import argparse
@@ -126,10 +127,10 @@ except Exception:
 	def cache_decorator(func):
 		return func
 
-version = '1.38'
+version = '1.39'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2026-04-07'
+COMMIT_DATE = '2026-04-13'
 
 SMARTCTL_PATH = shutil.which("smartctl")
 DISKUTIL_PATH = shutil.which("diskutil")
@@ -681,7 +682,11 @@ def main():
 	parser.add_argument('filter_patterns', nargs='*', help="Filter pattern(s) to match (e.g., sda, nvme0n1p1, btrfs). If specified, only devices matching any of the patterns will be shown. Will prioritize print_period first thus if wanting to filter a number and do not repeat, append a 0 (zero) at the end.")
 	parser.add_argument('print_period', nargs='?', default=0, type=int, help="If specified as a non zero number, repeat the output every N seconds")
 	parser.add_argument('-V', '--version', action='version', version=f"%(prog)s {version} @ {COMMIT_DATE} stat drives by pan@zopyr.us")
-
+	try:
+		import argcomplete
+		argcomplete.autocomplete(parser,always_complete_options='long')
+	except ImportError:
+		pass
 	args = parser.parse_args()
 	tptDict = {}
 	if not args.print_period:
