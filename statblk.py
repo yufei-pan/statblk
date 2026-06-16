@@ -147,7 +147,7 @@ except Exception:
 	def cache_decorator(func):
 		return func
 
-version = '1.40'
+version = '1.41'
 VERSION = version
 __version__ = version
 COMMIT_DATE = '2026-04-13'
