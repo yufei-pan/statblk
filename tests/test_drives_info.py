@@ -43,7 +43,7 @@ def test_output_and_exclude_columns(monkeypatch):
     assert rows[0] == ["NAME", "MOUNTPOINT"]
 
 
-def test_filter_and_invert(monkeypatch):
+def test_filter_patterns(monkeypatch):
     _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/nvme0n1"])
     mounts = _mount_table("/dev/sda1", "/")
     mounts["/dev/nvme0n1"] = [statblk.MountEntry("/mnt", "xfs", ["rw"])]
@@ -56,6 +56,66 @@ def test_filter_and_invert(monkeypatch):
     names = [r[0] for r in rows[1:]]
     assert any("nvme" in n for n in names)
     assert not any(n.endswith("sda1") or n == "sda1" for n in names)
+
+
+def test_invert_match_row_filter(monkeypatch):
+    _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/nvme0n1"])
+    mounts = _mount_table("/dev/sda1", "/")
+    mounts["/dev/nvme0n1"] = [statblk.MountEntry("/mnt", "xfs", ["rw"])]
+    monkeypatch.setattr(statblk, "parseMount", lambda: mounts)
+    fake = FakeCmdResult([], 0)
+    monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
+    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
+    monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
+    rows = statblk.get_drives_info(
+        output="NAME,MOUNTPOINT",
+        filter_patterns=["nvme"],
+        invert_match=True,
+        timeout=2,
+    )
+    names = [r[0] for r in rows[1:]]
+    assert "sda1" in names
+    assert not any("nvme" in n for n in names)
+
+
+def test_invert_match_devname_only(monkeypatch):
+    mounts = defaultdict(
+        list,
+        {
+            "/dev/sda1": [statblk.MountEntry("/mnt/nvme-backup", "ext4", ["rw"])],
+            "/dev/nvme0n1": [statblk.MountEntry("/", "xfs", ["rw"])],
+        },
+    )
+    _patch_linux_basics(
+        monkeypatch, devices=["/dev/sda1", "/dev/nvme0n1"], mounts=mounts
+    )
+    fake = FakeCmdResult([], 0)
+    monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
+    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
+    monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
+    # -D + invert: exclude devices whose name matches "nvme"; mountpoint
+    # "/mnt/nvme-backup" must not keep sda1 out (devname-only path).
+    rows = statblk.get_drives_info(
+        output="NAME,MOUNTPOINT",
+        filter_patterns=["nvme"],
+        invert_match=True,
+        match_devname_only=True,
+        timeout=2,
+    )
+    assert [r[0] for r in rows[1:]] == ["sda1"]
+    assert rows[1][1] == "/mnt/nvme-backup"
+
+
+def test_invert_match_no_patterns_header_only(monkeypatch):
+    _patch_linux_basics(monkeypatch)
+    fake = FakeCmdResult([], 0)
+    monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
+    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
+    monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
+    rows = statblk.get_drives_info(
+        output="NAME,MOUNTPOINT", invert_match=True, timeout=2
+    )
+    assert rows == [["NAME", "MOUNTPOINT"]]
 
 
 def test_lsblk_join_uses_timeout(monkeypatch):
@@ -72,20 +132,30 @@ def test_lsblk_join_uses_timeout(monkeypatch):
 
 def test_cache_cleared_between_get_drives_info_calls(monkeypatch):
     _patch_linux_basics(monkeypatch)
-    calls = {"n": 0}
+    clears = {"n": 0}
+    parse_calls = {"n": 0}
     tables = [
         _mount_table("/dev/sda1", "/old"),
         _mount_table("/dev/sda1", "/new"),
     ]
+    # Real-ish lru_cache: return cached value until cache_clear invalidates it.
+    cache = {"value": None, "valid": False, "misses": 0}
 
     def parse_mount():
-        # emulate cache decorator miss after clear: return next table
-        idx = min(calls["n"], len(tables) - 1)
-        calls["n"] += 1
-        return tables[idx]
+        parse_calls["n"] += 1
+        if cache["valid"]:
+            return cache["value"]
+        idx = min(cache["misses"], len(tables) - 1)
+        cache["misses"] += 1
+        cache["value"] = tables[idx]
+        cache["valid"] = True
+        return cache["value"]
 
-    # Replace cached parseMount with counting function; get_drives_info still calls cache_clear on attribute if present
-    parse_mount.cache_clear = lambda: None
+    def cache_clear():
+        clears["n"] += 1
+        cache["valid"] = False
+
+    parse_mount.cache_clear = cache_clear
     monkeypatch.setattr(statblk, "parseMount", parse_mount)
     fake = FakeCmdResult([], 0)
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
@@ -95,7 +165,11 @@ def test_cache_cleared_between_get_drives_info_calls(monkeypatch):
     r2 = statblk.get_drives_info(output="NAME,MOUNTPOINT", timeout=2)
     assert any("/old" in row for row in r1)
     assert any("/new" in row for row in r2)
-    assert calls["n"] >= 2
+    # Deleting cache_clear calls from get_drives_info would leave cache valid,
+    # so both rows would show /old and clears["n"] would stay 0.
+    assert clears["n"] >= 2
+    assert parse_calls["n"] >= 2
+    assert cache["misses"] == 2
 
 
 def test_mounted_only_skips_unmounted(monkeypatch):
