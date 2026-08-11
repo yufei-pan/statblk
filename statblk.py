@@ -374,15 +374,21 @@ def get_macos_diskutil_info(timeout=4):
 	return info_map
 
 def get_statvfs_use_size(mountpoint):
+	"""Return (total_bytes, used_bytes, avail_bytes) like GNU df.
+
+	used = (f_blocks - f_bfree) * frsize  — actual allocated blocks, not counting
+	root-reserved space as used. avail = f_bavail * frsize (space non-root can use).
+	FSUSE% should be used / (used + avail), matching df Use%.
+	"""
 	try:
 		st = os.statvfs(mountpoint)
 		block_size = st.f_frsize if st.f_frsize > 0 else st.f_bsize
 		total = st.f_blocks * block_size
 		avail = st.f_bavail * block_size
-		used = total - avail
-		return total, used
+		used = (st.f_blocks - st.f_bfree) * block_size
+		return total, used, avail
 	except Exception:
-		return 0, 0
+		return 0, 0, 0
 
 @cache_decorator
 def read_discard_support(sysfs_block_path):
@@ -573,7 +579,20 @@ def get_sector_size(sysfs_block_path):
 		sector_size = read_int(os.path.join(sysfs_block_path, "queue", "logical_block_size"))
 	return sector_size if sector_size else 512
 
+# Kernel block layer always reports /sys/block/*/stat sector counts in 512-byte
+# units, regardless of queue/hw_sector_size or logical_block_size.
+STAT_SECTOR_BYTES = 512
+
 def get_read_write_rate_throughput_iter(sysfs_block_path):
+	"""Yield (read_Bps, write_Bps) samples for a block device.
+
+	The first sample is a lifetime busy-time average: total bytes transferred
+	divided by time spent doing I/O since boot (from the stat time fields).
+	That gives an immediate non-zero estimate without waiting for a poll interval.
+
+	Later samples are interval rates: delta bytes / wall-clock elapsed since the
+	previous sample (used by watch mode after the first refresh).
+	"""
 	if IS_DARWIN:
 		# Per-device throughput is Linux /sys stat based; return zeros on macOS.
 		while True:
@@ -583,7 +602,7 @@ def get_read_write_rate_throughput_iter(sysfs_block_path):
 			yield 0, 0
 	rx_path = os.path.join(sysfs_block_path, "stat")
 	start_time = time.monotonic()
-	sector_size = get_sector_size(sysfs_block_path)
+	sector_size = STAT_SECTOR_BYTES
 	previous_bytes_read = 0
 	previous_bytes_written = 0
 	try:
@@ -610,6 +629,7 @@ def get_read_write_rate_throughput_iter(sysfs_block_path):
 				fields = f.read().strip().split()
 			if len(fields) < 7:
 				yield 0, 0
+				continue
 			# fields: https://www.kernel.org/doc/html/latest/block/stat.html
 			# 0 - reads completed successfully
 			# 1 - reads merged
@@ -654,6 +674,12 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 		_DEBUG_MODE = True
 	if tptDict is None:
 		tptDict = {}
+	# Refresh mount/diskutil caches each call so watch mode picks up remounts,
+	# label/size/UUID changes, etc. Throughput iterators in tptDict stay live.
+	if hasattr(parseMount, 'cache_clear'):
+		parseMount.cache_clear()
+	if hasattr(get_macos_diskutil_info, 'cache_clear'):
+		get_macos_diskutil_info.cache_clear()
 	if output == "all":
 		output_fields = ALL_OUTPUT_FIELDS
 	else:
@@ -721,7 +747,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	fstype_dict = {}
 	size_dict = {}
 	if (not IS_DARWIN) and {'SIZE','FSTYPE','UUID','LABEL'}.intersection(output_fields_set):
-		lsblk_result.thread.join(1)
+		lsblk_result.thread.join(timeout)
 		if lsblk_result.returncode == 0:
 			populate_lsblk_dicts(lsblk_result.stdout, output_fields_set, uuid_dict, fstype_dict, label_dict, size_dict, lsblk_pairs_format)
 	if IS_DARWIN:
@@ -763,7 +789,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 					device_properties['DISCARD'] = read_discard_support(parent_sysfs_path)
 			if parent_name in smart_infos and SMARTCTL_PATH:
 				smart_info_obj = smart_infos[parent_name]
-				smart_info_obj.thread.join(1)
+				smart_info_obj.thread.join(timeout)
 				for line in smart_info_obj.stdout:
 					line = line.lower()
 					if "health" in line:
@@ -803,10 +829,19 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 				if formated_only and not device_properties['FSTYPE']:
 					continue
 				device_properties['MOUNTPOINT'] = mount_entry.MOUNTPOINT
-				size_bytes, used_bytes = get_statvfs_use_size(device_properties['MOUNTPOINT'])
+				size_bytes, used_bytes, avail_bytes = get_statvfs_use_size(device_properties['MOUNTPOINT'])
 				if size_bytes == 0 and not show_zero_size_devices:
 					continue
-				device_properties['FSUSE%'] = f"{int(round(100.0 * used_bytes / size_bytes))}%" if size_bytes > 0 else "N/A"
+				# Match GNU df Use%: used / (used + avail for non-root), with
+				# ceiling when the ratio is not exact (coreutils-style).
+				fs_denom = used_bytes + avail_bytes
+				if fs_denom > 0:
+					pct = (used_bytes * 100) // fs_denom
+					if (used_bytes * 100) % fs_denom:
+						pct += 1
+					device_properties['FSUSE%'] = f"{pct}%"
+				else:
+					device_properties['FSUSE%'] = "N/A"
 				if print_bytes:
 					device_properties['SIZE'] = str(size_bytes)
 				else:
@@ -857,13 +892,14 @@ def main():
 	parser.add_argument('-o','--output', help="Specify which output columns to print.Use comma to separate columns. default: all available", default="all", type=str)
 	parser.add_argument('-x','--exclude', help="Specify which output columns to exclude.Use comma to separate columns. default: none", default="", type=str)
 	parser.add_argument('-t','--timeout', help="Set command timeout in seconds (default: 2)", default=2, type=int)
+	parser.add_argument('-w','--watch', metavar='SECONDS', type=int, default=None,
+						help="Repeat output every SECONDS (watch mode). Equivalent to a trailing integer positional.")
 	parser.add_argument('--sudo', help="Run commands as root with sudo. Needed for querying SMART info.", action="store_true")
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")
 	parser.add_argument('-D','--match_devname_only', help="Change filter pattern to match just the device names instead of the full line", action="store_true")
 	parser.add_argument('-v','--invert_match', help="Invert the filter match", action="store_true")
 	parser.add_argument('--debug', help="Print suppressed exceptions to stderr for troubleshooting", action="store_true")
-	parser.add_argument('filter_patterns', nargs='*', help="Filter pattern(s) to match (e.g., sda, nvme0n1p1, btrfs). If specified, only devices matching any of the patterns will be shown. Will prioritize print_period first thus if wanting to filter a number and do not repeat, append a 0 (zero) at the end.")
-	parser.add_argument('print_period', nargs='?', default=0, type=int, help="If specified as a non zero number, repeat the output every N seconds")
+	parser.add_argument('filter_patterns', nargs='*', help="Filter pattern(s) to match (e.g., sda, nvme0n1p1, btrfs). A trailing integer is treated as --watch SECONDS; append 0 to filter a number without watching.")
 	parser.add_argument('-V', '--version', action='version', version=f"%(prog)s {version} @ {COMMIT_DATE} stat drives by pan@zopyr.us")
 	try:
 		import argcomplete
@@ -874,10 +910,15 @@ def main():
 	global _DEBUG_MODE
 	_DEBUG_MODE = args.debug
 	tptDict = {}
-	if not args.print_period:
+	# Prefer explicit -w/--watch; otherwise peel a trailing integer from positionals
+	# (historical: `statblk sda 5` / `statblk 5`).
+	if args.watch is not None:
+		print_period = args.watch
+	else:
+		print_period = 0
 		if args.filter_patterns:
 			try:
-				args.print_period = int(args.filter_patterns[-1])
+				print_period = int(args.filter_patterns[-1])
 				args.filter_patterns = args.filter_patterns[:-1]
 			except Exception:
 				pass
@@ -896,9 +937,9 @@ def main():
 			print(json.dumps(results, indent=1),flush=True)
 		else:
 			print(multiCMD.pretty_format_table(results,full=args.full),flush=True)
-		if args.print_period > 0:
+		if print_period > 0:
 			try:
-				time.sleep(args.print_period)
+				time.sleep(print_period)
 				args.active_only = True
 			except KeyboardInterrupt:
 				break

@@ -90,25 +90,29 @@ Use `-o` / `--output` to select columns (comma-separated) or `-x` / `--exclude` 
 | Flag | Description |
 |------|-------------|
 | `-t`, `--timeout` | Subprocess timeout in seconds (default: 2) |
+| `-w`, `--watch SECONDS` | Repeat output every SECONDS (watch mode) |
 | `--sudo` | Run external commands via `sudo` (needed for SMART on many systems) |
 | `--debug` | Print suppressed exceptions to stderr |
 | `-V`, `--version` | Show version and exit |
 
 ### Watch mode
 
-Pass a refresh interval as the last positional argument (seconds):
+Prefer `-w` / `--watch`. A trailing integer positional still works the same as before:
 
 ```bash
-statblk 5          # update every 5 seconds
+statblk -w 5       # update every 5 seconds
+statblk 5          # same (trailing integer)
 statblk sda 3      # filter to sda, refresh every 3 seconds
+statblk -w 3 sda   # same with explicit flag (flag wins if both are given)
 ```
 
-After the first refresh, `--active_only` is enabled automatically so only busy devices are shown.
+After the first refresh, `--active_only` is enabled automatically so only busy devices are shown. Each refresh re-reads mounts, labels, UUIDs, and sizes (throughput iterators stay live across refreshes).
 
-If a filter pattern looks like a number, append `0` so it is not treated as the refresh interval:
+If a filter pattern looks like a number, append `0` so it is not treated as the refresh interval (or use `-w` and keep the number as a filter):
 
 ```bash
 statblk nvme0 0    # match nvme0, single run (no watch)
+statblk -w 0 nvme0 # same via flag
 ```
 
 ## Platform notes
@@ -118,7 +122,8 @@ statblk nvme0 0    # match nvme0, single run (no watch)
 Uses sysfs, `/proc/self/mountinfo`, `lsblk`, and optionally `smartctl`.
 
 - **SMART** requires `smartctl` (smartmontools). Use `--sudo` if permission is denied.
-- **READ / WRITE** throughput comes from `/sys/class/block/*/stat`.
+- **READ / WRITE** throughput comes from `/sys/class/block/*/stat` (always 512-byte sector units).
+- On a single-shot run (and the first row of watch mode), READ/WRITE are a lifetime busy-time average (bytes / time spent in I/O since boot). In watch mode, later refreshes are interval rates over the sleep period (Δbytes / wall clock).
 
 ### macOS
 
