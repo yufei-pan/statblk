@@ -131,11 +131,25 @@ Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device s
 
 ## Development
 
-Run embedded doctests:
+Install test deps:
 
 ```bash
+pip install -r requirements-dev.txt
+```
+
+Run unit tests (default; live excluded) and embedded doctests:
+
+```bash
+pytest
 python -m doctest statblk.py -v
 python statblk.py --doctest
+```
+
+Optional live checks:
+
+```bash
+pytest -m live          # soft smoke on this host
+pytest -m live_strict   # compare FSUSE% and names to df/lsblk
 ```
 
 ## License
