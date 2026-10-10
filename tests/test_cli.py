@@ -178,3 +178,31 @@ def test_json_objects_output(monkeypatch, capsys):
         {"NAME": "sda2", "SIZE": 2000, "FSUSE%": None, "READ": None, "WRITE": None, "MOUNTPOINT": ""},
         {"NAME": "host:/export", "SIZE": None, "FSUSE%": None, "READ": None, "WRITE": None, "MOUNTPOINT": "/mnt/gone"},
     ]
+
+
+HOSTILE_ROWS = [
+    ["NAME", "LABEL", "MOUNTPOINT"],
+    # A USB stick label / mount path can carry terminal control sequences.
+    ["sdz1", "\x1b]0;pwned\x07\x1b[2J", "/mnt/a\nb‮"],
+]
+
+
+def test_table_output_escapes_control_characters(monkeypatch, capsys):
+    real_table = statblk.multiCMD.pretty_format_table
+    _patch_main_basics(monkeypatch, lambda **k: [list(r) for r in HOSTILE_ROWS])
+    monkeypatch.setattr(statblk.multiCMD, "pretty_format_table", real_table)
+    monkeypatch.setattr(statblk.sys, "argv", ["statblk"])
+    statblk.main()
+    out = capsys.readouterr().out
+    assert not any(c in out for c in "\x1b\x07‮")
+    assert "\\x1b]0;pwned\\x07\\x1b[2J" in out
+    assert "/mnt/a\\x0ab\\u202e" in out
+
+
+def test_json_output_keeps_values_but_no_raw_control_characters(monkeypatch, capsys):
+    _patch_main_basics(monkeypatch, lambda **k: [list(r) for r in HOSTILE_ROWS])
+    monkeypatch.setattr(statblk.sys, "argv", ["statblk", "-j"])
+    statblk.main()
+    out = capsys.readouterr().out
+    assert "\x1b" not in out
+    assert json.loads(out)[1] == HOSTILE_ROWS[1]

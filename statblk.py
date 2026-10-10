@@ -154,7 +154,7 @@ def clear_caches():
 	for fn in _CACHED_FUNCTIONS:
 		fn.cache_clear()
 
-version = '1.43'
+version = '1.44'
 VERSION = version
 __version__ = version
 COMMIT_DATE = '2026-10-10'
@@ -989,6 +989,31 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	return output_list
 
 
+def printable(text):
+	r"""Escape non-printable characters (ESC, BEL, newline, bidi overrides...)
+	as \xNN / \uNNNN so labels, models and mount paths, which anyone with a
+	USB stick can set, can't drive the terminal or fake table rows.
+
+	>>> printable('pwned\x1b[2J')
+	'pwned\\x1b[2J'
+	>>> printable('/mnt/a b')
+	'/mnt/a b'
+	"""
+	if text.isprintable():
+		return text
+	escaped = []
+	for c in text:
+		code = ord(c)
+		if c.isprintable():
+			escaped.append(c)
+		elif code < 0x100:
+			escaped.append('\\x%02x' % code)
+		elif code < 0x10000:
+			escaped.append('\\u%04x' % code)
+		else:
+			escaped.append('\\U%08x' % code)
+	return ''.join(escaped)
+
 def rows_to_objects(rows):
 	"""Turn get_drives_info(print_bytes=True) rows into one dict per row, with
 	SIZE/READ/WRITE as integer bytes and FSUSE% as an integer percent (None
@@ -1075,7 +1100,9 @@ def main():
 				import json
 				print(json.dumps(results, indent=1),flush=True)
 			else:
-				print(multiCMD.pretty_format_table(results,full=args.full),flush=True)
+				# JSON output is already escaped by json.dumps; the table is not.
+				safe_rows = [[printable(str(value)) for value in row] for row in results]
+				print(multiCMD.pretty_format_table(safe_rows,full=args.full),flush=True)
 			if print_period <= 0:
 				break
 			time.sleep(print_period)
