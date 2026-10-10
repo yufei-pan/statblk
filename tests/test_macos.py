@@ -1,3 +1,6 @@
+import os
+from collections import defaultdict
+
 import statblk
 from fakes import DARWIN_MOUNT_SAMPLE, DISKUTIL_INFO_ALL_SAMPLE
 
@@ -28,3 +31,36 @@ def test_throughput_zero_on_darwin(monkeypatch):
     monkeypatch.setattr(statblk, "IS_DARWIN", True)
     it = statblk.get_read_write_rate_throughput_iter("/dev/disk0")
     assert next(it) == (0, 0)
+
+
+def _fake_dev_listing(monkeypatch, entries):
+    real_listdir = os.listdir
+    monkeypatch.setattr(
+        statblk.os, "listdir", lambda p: list(entries) if p == "/dev" else real_listdir(p)
+    )
+
+
+def test_get_blocks_includes_apfs_snapshot_nodes(monkeypatch):
+    monkeypatch.setattr(statblk, "IS_DARWIN", True)
+    _fake_dev_listing(monkeypatch, ["disk0", "disk0s1", "disk3s1s1", "disk3s1", "diskX", "null"])
+    assert statblk.get_blocks() == ["/dev/disk0", "/dev/disk0s1", "/dev/disk3s1", "/dev/disk3s1s1"]
+
+
+def test_partition_parent_of_apfs_snapshot(monkeypatch):
+    monkeypatch.setattr(statblk, "IS_DARWIN", True)
+    monkeypatch.setattr(statblk, "is_block_device", lambda p: p == "/dev/disk3")
+    assert statblk.get_partition_parent_name("disk3s1s1") == "/dev/disk3"
+
+
+def test_darwin_sealed_root_listed_without_pseudo(monkeypatch):
+    # macOS 11+: `/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)`
+    monkeypatch.setattr(statblk, "IS_DARWIN", True)
+    _fake_dev_listing(monkeypatch, ["disk3", "disk3s1", "disk3s1s1"])
+    mounts = defaultdict(list, {"/dev/disk3s1s1": [statblk.MountEntry("/", "apfs", ["apfs", "sealed"])]})
+    monkeypatch.setattr(statblk, "parseMount", lambda: mounts)
+    monkeypatch.setattr(statblk, "is_block_device", lambda p: True)
+    monkeypatch.setattr(statblk, "get_statvfs_use_size", lambda mp, *a, **k: (1000, 350, 650))
+    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
+    monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
+    rows = statblk.get_drives_info(output="NAME,MOUNTPOINT", timeout=2)
+    assert rows[1:] == [["disk3s1s1", "/"]]

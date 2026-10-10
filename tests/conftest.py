@@ -18,15 +18,9 @@ def pytest_configure(config):
 
 @pytest.fixture(autouse=True)
 def _clear_statblk_caches():
-    for fn in (statblk.parseMount, statblk.get_macos_diskutil_info):
-        clear = getattr(fn, "cache_clear", None)
-        if clear:
-            clear()
+    statblk.clear_caches()
     yield
-    for fn in (statblk.parseMount, statblk.get_macos_diskutil_info):
-        clear = getattr(fn, "cache_clear", None)
-        if clear:
-            clear()
+    statblk.clear_caches()
 
 
 def skip_unless_linux_block():

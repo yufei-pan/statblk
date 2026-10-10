@@ -1,25 +1,37 @@
-from pathlib import Path
+import os
 
 
 class FakeCmdResult:
-    def __init__(self, stdout=None, returncode=0):
+    def __init__(self, stdout=None, returncode=0, alive=False):
         self.stdout = list(stdout or [])
         self.returncode = returncode
         self.join_timeouts = []
+        self.alive = alive
         self.thread = self
 
     def join(self, timeout=None):
         self.join_timeouts.append(timeout)
 
+    def is_alive(self):
+        return self.alive
+
+
+def redirect_sys_class_block(tmp_path, monkeypatch):
+    """Point hardcoded /sys/class/block joins at tmp_path/sys/class/block."""
+    fake = str(tmp_path / "sys" / "class" / "block")
+    real_join = os.path.join
+
+    def join(a, *parts):
+        if a == "/sys/class/block":
+            return real_join(fake, *parts)
+        return real_join(a, *parts)
+
+    monkeypatch.setattr(os.path, "join", join)
+
 
 LSBLK_PAIRS_SAMPLE = [
     'NAME="/dev/sda1" SIZE="1073741824" FSTYPE="ext4" UUID="u-1" LABEL="boot vol"',
     'NAME="/dev/sda2" SIZE="0" FSTYPE="" UUID="" LABEL=""',
-]
-
-LSBLK_RAW_SAMPLE = [
-    "/dev/sda1 1073741824 ext4 u-1 boot vol",
-    "/dev/sda2 0",
 ]
 
 MOUNTINFO_SAMPLE = [
@@ -55,6 +67,7 @@ def make_sysfs_block(
     model=None,
     serial=None,
     discard_max_bytes=0,
+    with_device=True,
 ):
     """Create tmp_path/sys/class/block/<name>/ ... and return that block path."""
     block = tmp_path / "sys" / "class" / "block" / name
@@ -69,6 +82,8 @@ def make_sysfs_block(
         (block / "partition").write_text("1")
     if stat_fields is not None:
         (block / "stat").write_text(" ".join(str(x) for x in stat_fields) + "\n")
+    if not with_device:
+        return block
     device = block / "device"
     device.mkdir()
     if model is not None:

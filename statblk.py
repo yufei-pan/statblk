@@ -10,13 +10,16 @@ Run embedded doctests::
     python -m doctest statblk.py -v
 """
 import argparse
+import functools
 import os
 import re
 import shutil
 import stat
 import sys
+import threading
 import time
 import traceback
+import typing
 from collections import defaultdict, namedtuple
 
 try:
@@ -115,63 +118,73 @@ hC&:PC:E%[FANK#cH#@/_I>:!&/)=\B\c="2%19!$[Zl]el65mfBHS+OJM(bb*[5$&m0lZ\p2AiZ-`3@
 #-H=)K\O@*IBaYQY*5)<QXXiqV0<g`TS`9^5\A`eL3h(@';$d4&U,IgcO]eX`!!/HMqptiKQG749Z,C;P!WW3#!!HG.'''
 	exec(lzma.decompress(base64.a85decode(_SRC_B85)).decode("utf-8"), multiCMD.__dict__)
 
-try:
-	import functools
-	import typing
-	# Check if functiools.cache is available
-	# cache_decorator = functools.cache
-	def cache_decorator(user_function):
-		def _make_hashable(item):
-			if isinstance(item, typing.Mapping):
-				# Sort items so that {'a':1, 'b':2} and {'b':2, 'a':1} hash the same
-				return tuple(
-					( _make_hashable(k), _make_hashable(v) )
-					for k, v in sorted(item.items(), key=lambda item: item[0])
-				)
-			if isinstance(item, (list, set, tuple)):
-				return tuple(_make_hashable(e) for e in item)
-			# Fallback: assume item is already hashable
-			return item
-		def decorating_function(user_function):
-			# Create the real cached function
-			cached_func = functools.lru_cache(maxsize=None)(user_function)
-			@functools.wraps(user_function)
-			def wrapper(*args, **kwargs):
-				# Convert all args/kwargs to hashable equivalents
-				hashable_args = tuple(_make_hashable(a) for a in args)
-				hashable_kwargs = {
-					k: _make_hashable(v) for k, v in kwargs.items()
-				}
-				# Call the lru-cached version
-				return cached_func(*hashable_args, **hashable_kwargs)
-			# Expose cache statistics and clear method
-			wrapper.cache_info = cached_func.cache_info
-			wrapper.cache_clear = cached_func.cache_clear
-			return wrapper
-		return decorating_function(user_function)
-except Exception:
-	import sys
-	# If lrucache is not available, use a dummy decorator
-	print('Warning: functools.lru_cache is not available, multiSSH3 will run slower without cache.',file=sys.stderr)
-	def cache_decorator(func):
-		return func
+# Every function wrapped by cache_decorator; clear_caches() empties them all so
+# each get_drives_info() refresh sees current sysfs / mount / diskutil state.
+_CACHED_FUNCTIONS = []
 
-version = '1.42'
+def _make_hashable(item):
+	if isinstance(item, typing.Mapping):
+		# Sort items so that {'a':1, 'b':2} and {'b':2, 'a':1} hash the same
+		return tuple(
+			( _make_hashable(k), _make_hashable(v) )
+			for k, v in sorted(item.items(), key=lambda item: item[0])
+		)
+	if isinstance(item, (list, set, tuple)):
+		return tuple(_make_hashable(e) for e in item)
+	# Fallback: assume item is already hashable
+	return item
+
+def cache_decorator(user_function):
+	cached_func = functools.lru_cache(maxsize=None)(user_function)
+	@functools.wraps(user_function)
+	def wrapper(*args, **kwargs):
+		# Convert all args/kwargs to hashable equivalents
+		hashable_args = tuple(_make_hashable(a) for a in args)
+		hashable_kwargs = {
+			k: _make_hashable(v) for k, v in kwargs.items()
+		}
+		return cached_func(*hashable_args, **hashable_kwargs)
+	# Expose cache statistics and clear method
+	wrapper.cache_info = cached_func.cache_info
+	wrapper.cache_clear = cached_func.cache_clear
+	_CACHED_FUNCTIONS.append(wrapper)
+	return wrapper
+
+def clear_caches():
+	for fn in _CACHED_FUNCTIONS:
+		fn.cache_clear()
+
+version = '1.43'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2026-08-10'
+COMMIT_DATE = '2026-10-10'
 
-SMARTCTL_PATH = shutil.which("smartctl")
+# smartmontools installs into sbin, which non-root PATHs often omit (e.g. Debian),
+# yet `--sudo` exists exactly for non-root users who want SMART.
+SMARTCTL_FALLBACK_DIRS = ["/usr/sbin", "/sbin", "/usr/local/sbin", "/opt/homebrew/sbin"]
+
+def find_smartctl(fallback_dirs=SMARTCTL_FALLBACK_DIRS):
+	return shutil.which("smartctl") or shutil.which("smartctl", path=os.pathsep.join(fallback_dirs))
+
+SMARTCTL_PATH = find_smartctl()
 DISKUTIL_PATH = shutil.which("diskutil")
 IS_DARWIN = (sys.platform == "darwin")
+MOUNTINFO_PATH = '/proc/self/mountinfo'
 _DEBUG_MODE = False
-_LSBLK_PAIRS_SUPPORTED = None
 LSBLK_PAIR_RE = re.compile(r'(\w+)="([^"]*)"')
+# Output columns that come (at least partly) from the lsblk call on Linux.
+LSBLK_FIELDS = {'SIZE', 'FSTYPE', 'UUID', 'LABEL', 'MODEL', 'SERIAL'}
+_OCTAL_ESCAPE_RE = re.compile(r'\\([0-7]{3})')
+_HEX_ESCAPE_RE = re.compile(rb'\\x([0-9a-fA-F]{2})')
 
 def debug_exc(context, exc):
 	if _DEBUG_MODE:
 		print(f"DEBUG [{context}]: {exc}", file=sys.stderr)
 		traceback.print_exc()
+
+def debug_msg(context, msg):
+	if _DEBUG_MODE:
+		print(f"DEBUG [{context}]: {msg}", file=sys.stderr)
 
 def compile_filter_pattern(filter_patterns):
 	"""Compile CLI filter patterns into one regex.
@@ -188,66 +201,54 @@ def compile_filter_pattern(filter_patterns):
 		print(f"Invalid filter pattern: {e}", file=sys.stderr)
 		sys.exit(1)
 
-def lsblk_supports_pairs():
-	global _LSBLK_PAIRS_SUPPORTED
-	if _LSBLK_PAIRS_SUPPORTED is not None:
-		return _LSBLK_PAIRS_SUPPORTED
-	try:
-		help_out = multiCMD.run_command('lsblk --help', timeout=2, quiet=True)
-		text = '\n'.join(help_out) if help_out else ''
-		_LSBLK_PAIRS_SUPPORTED = '--pairs' in text or '-P,' in text or ' --pairs' in text
-	except Exception as e:
-		debug_exc('lsblk --help', e)
-		_LSBLK_PAIRS_SUPPORTED = False
-	return _LSBLK_PAIRS_SUPPORTED
-
 def _decode_proc_path(path):
-	"""Decode \\040 space escapes from proc mount paths.
+	r"""Decode the octal escapes the kernel uses in /proc mount paths
+	(space, tab, newline and backslash).
 
 	>>> _decode_proc_path('/mnt\\040disk')
 	'/mnt disk'
 	>>> _decode_proc_path('/mnt/disk')
 	'/mnt/disk'
 	"""
-	return path.replace('\\040', ' ')
+	if '\\' not in path:
+		return path
+	return _OCTAL_ESCAPE_RE.sub(lambda m: chr(int(m.group(1), 8)), path)
+
+def _decode_hex_escapes(text):
+	r"""Decode \xNN byte escapes used by lsblk -P and udev symlink names.
+
+	Escaped bytes are reassembled before UTF-8 decoding, so multi-byte
+	characters escaped one byte at a time come back intact.
+
+	>>> _decode_hex_escapes('my\\x20label')
+	'my label'
+	>>> _decode_hex_escapes('plain')
+	'plain'
+	"""
+	if '\\x' not in text:
+		return text
+	raw = _HEX_ESCAPE_RE.sub(lambda m: bytes([int(m.group(1), 16)]), text.encode('utf-8'))
+	return raw.decode('utf-8', errors='replace')
 
 def parse_lsblk_pairs_line(line):
-	"""Parse one lsblk -P output line.
+	"""Parse one lsblk -P output line into a {column: value} dict.
 
-	>>> parse_lsblk_pairs_line('NAME="/dev/sda" SIZE="107374182400" FSTYPE="ext4" UUID="abc-123" LABEL="boot"')
+	>>> fields = parse_lsblk_pairs_line('NAME="/dev/sda" SIZE="107374182400" FSTYPE="ext4" UUID="abc-123" LABEL="boot"')
+	>>> fields['NAME'], fields['SIZE'], fields['FSTYPE'], fields['UUID'], fields['LABEL']
 	('/dev/sda', '107374182400', 'ext4', 'abc-123', 'boot')
-	>>> parse_lsblk_pairs_line('NAME="/dev/sda2" SIZE="0" FSTYPE="" UUID="" LABEL=""')
-	('/dev/sda2', '0', '', '', '')
 	"""
-	pairs = dict(LSBLK_PAIR_RE.findall(line))
-	return (
-		pairs.get('NAME', ''),
-		pairs.get('SIZE', ''),
-		pairs.get('FSTYPE', ''),
-		pairs.get('UUID', ''),
-		pairs.get('LABEL', ''),
-	)
+	return {key: _decode_hex_escapes(value) for key, value in LSBLK_PAIR_RE.findall(line)}
 
-def parse_lsblk_raw_line(line):
-	"""Parse one lsblk raw space-separated line (split preserves LABEL spaces).
+def populate_lsblk_dicts(stdout, output_fields_set, uuid_dict, fstype_dict, label_dict, size_dict,
+						model_dict=None, serial_dict=None):
+	"""Populate device metadata dicts from lsblk -P stdout lines.
 
-	>>> parse_lsblk_raw_line('/dev/sda1 629145600 ext4 abc-de my label')
-	('/dev/sda1', '629145600', 'ext4', 'abc-de', 'my label')
-	>>> parse_lsblk_raw_line('/dev/sda 100')
-	('/dev/sda', '100', '', '', '')
-	"""
-	parts = line.split(' ', 4)
-	while len(parts) < 5:
-		parts.append('')
-	return parts[0], parts[1], parts[2], parts[3], parts[4]
-
-def populate_lsblk_dicts(stdout, output_fields_set, uuid_dict, fstype_dict, label_dict, size_dict, pairs_format):
-	"""Populate device metadata dicts from lsblk stdout lines.
+	MODEL/SERIAL come from udev via lsblk and are only set on whole disks.
 
 	>>> u, f, l, s = {}, {}, {}, {}
 	>>> populate_lsblk_dicts(
 	...     ['NAME="/dev/sda" SIZE="100" FSTYPE="ext4" UUID="u1" LABEL="l1"'],
-	...     {'SIZE', 'FSTYPE', 'UUID', 'LABEL'}, u, f, l, s, True)
+	...     {'SIZE', 'FSTYPE', 'UUID', 'LABEL'}, u, f, l, s)
 	>>> s['/dev/sda'], f['/dev/sda'], u['/dev/sda'], l['/dev/sda']
 	(100, 'ext4', 'u1', 'l1')
 	"""
@@ -256,10 +257,12 @@ def populate_lsblk_dicts(stdout, output_fields_set, uuid_dict, fstype_dict, labe
 		if not line:
 			continue
 		try:
-			if pairs_format:
-				lsblk_name, lsblk_size, lsblk_fstype, lsblk_uuid, lsblk_label = parse_lsblk_pairs_line(line)
-			else:
-				lsblk_name, lsblk_size, lsblk_fstype, lsblk_uuid, lsblk_label = parse_lsblk_raw_line(line)
+			fields = parse_lsblk_pairs_line(line)
+			lsblk_name = fields.get('NAME', '')
+			lsblk_size = fields.get('SIZE', '')
+			lsblk_fstype = fields.get('FSTYPE', '')
+			lsblk_uuid = fields.get('UUID', '')
+			lsblk_label = fields.get('LABEL', '')
 			if lsblk_name.startswith(os.path.sep):
 				lsblk_name = os.path.realpath(lsblk_name)
 			if 'UUID' in output_fields_set and lsblk_uuid:
@@ -268,6 +271,10 @@ def populate_lsblk_dicts(stdout, output_fields_set, uuid_dict, fstype_dict, labe
 				fstype_dict[lsblk_name] = lsblk_fstype
 			if 'LABEL' in output_fields_set and lsblk_label:
 				label_dict[lsblk_name] = lsblk_label
+			if 'MODEL' in output_fields_set and model_dict is not None and fields.get('MODEL'):
+				model_dict[lsblk_name] = " ".join(fields['MODEL'].split())
+			if 'SERIAL' in output_fields_set and serial_dict is not None and fields.get('SERIAL'):
+				serial_dict[lsblk_name] = " ".join(fields['SERIAL'].split())
 			if 'SIZE' in output_fields_set:
 				size_dict[lsblk_name] = int(lsblk_size)
 		except Exception as e:
@@ -303,7 +310,7 @@ def build_symlink_dict(dir_path):
 			try:
 				if os.path.islink(p):
 					tgt = os.path.realpath(p)
-					mapping.setdefault(tgt, entry)
+					mapping.setdefault(tgt, _decode_hex_escapes(entry))
 			except Exception:
 				continue
 	except Exception:
@@ -382,15 +389,55 @@ def get_macos_diskutil_info(timeout=4):
 			current[key.strip()] = value.strip()
 	return info_map
 
-def get_statvfs_use_size(mountpoint):
-	"""Return (total_bytes, used_bytes, avail_bytes) like GNU df.
+# mountpoint -> daemon thread still blocked in os.statvfs from an earlier call.
+_HUNG_STATVFS = {}
+# Floor on the statvfs wait, so healthy mounts still get answered after a stuck
+# smartctl has used up the refresh deadline.
+STATVFS_MIN_WAIT = 0.5
+
+def _statvfs_with_timeout(mountpoint, timeout):
+	"""os.statvfs that gives up after `timeout` seconds (dead NFS/CIFS server).
+
+	Returns None on timeout. The blocked thread can't be cancelled, so it is
+	remembered and later calls for that mountpoint return None right away
+	instead of piling up another stuck thread every watch refresh.
+	"""
+	hung = _HUNG_STATVFS.get(mountpoint)
+	if hung is not None:
+		if hung.is_alive():
+			return None
+		del _HUNG_STATVFS[mountpoint]
+	result = {}
+	def run():
+		try:
+			result['st'] = os.statvfs(mountpoint)
+		except Exception as e:
+			result['error'] = e
+	thread = threading.Thread(target=run, daemon=True)
+	thread.start()
+	thread.join(timeout)
+	if thread.is_alive():
+		_HUNG_STATVFS[mountpoint] = thread
+		return None
+	if 'error' in result:
+		raise result['error']
+	return result['st']
+
+def get_statvfs_use_size(mountpoint, timeout=None):
+	"""Return (total_bytes, used_bytes, avail_bytes) like GNU df, or None if
+	statvfs did not answer within `timeout` seconds (None = wait forever).
 
 	used = (f_blocks - f_bfree) * frsize  — actual allocated blocks, not counting
 	root-reserved space as used. avail = f_bavail * frsize (space non-root can use).
 	FSUSE% should be used / (used + avail), matching df Use%.
 	"""
 	try:
-		st = os.statvfs(mountpoint)
+		if timeout is None:
+			st = os.statvfs(mountpoint)
+		else:
+			st = _statvfs_with_timeout(mountpoint, timeout)
+			if st is None:
+				return None
 		block_size = st.f_frsize if st.f_frsize > 0 else st.f_bsize
 		total = st.f_blocks * block_size
 		avail = st.f_bavail * block_size
@@ -404,13 +451,7 @@ def read_discard_support(sysfs_block_path):
 	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
 		return 'N/A'
 	dmbytes = read_int(os.path.join(sysfs_block_path, "queue", "discard_max_bytes"))
-	try:
-		if dmbytes > 0:
-			return 'Yes'
-		else:
-			return 'No'
-	except Exception:
-		return 'N/A'
+	return 'Yes' if dmbytes > 0 else 'No'
 
 @cache_decorator
 def get_real_sysfs_device_path(sysfs_block_path):
@@ -443,7 +484,7 @@ def read_model_and_serial(sysfs_block_path):
 		serial = ''
 	return model, serial
 
-def read_size(sysfs_block_path):# -> tuple[int | None, Any] | Literal['']:
+def read_size(sysfs_block_path):
 	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
 		return 0
 	sectors = read_int(os.path.join(sysfs_block_path, "size"))
@@ -501,32 +542,33 @@ def parse_darwin_mount_line(line):
 @cache_decorator
 def parseMount():
 	mount_table = defaultdict(list)
+	def add(parsed):
+		# Skip autofs triggers: stat-ing them mounts the target (df skips them
+		# too); the real filesystem shows up as its own entry once mounted.
+		if parsed and parsed[1].FSTYPE != 'autofs':
+			device_name, entry = parsed
+			mount_table[device_name].append(entry)
 	if IS_DARWIN:
 		rtn = multiCMD.run_command('mount', timeout=1, quiet=True)
 		for line in rtn:
-			parsed = parse_darwin_mount_line(line)
-			if parsed:
-				device_name, entry = parsed
-				mount_table[device_name].append(entry)
+			add(parse_darwin_mount_line(line))
 		return mount_table
 	try:
-		with open('/proc/self/mountinfo', 'r', encoding='utf-8', errors='ignore') as f:
+		with open(MOUNTINFO_PATH, 'r', encoding='utf-8', errors='ignore') as f:
 			for line in f:
-				parsed = parse_mountinfo_line(line)
-				if parsed:
-					device_name, entry = parsed
-					mount_table[device_name].append(entry)
+				add(parse_mountinfo_line(line))
 	except Exception as e:
 		debug_exc('parseMount', e)
 	return mount_table
 
 def get_blocks():
 	if IS_DARWIN:
-		# On macOS, enumerate /dev/disk* and /dev/disk*s* nodes.
+		# On macOS, enumerate /dev/diskN, slices (diskNsM) and APFS snapshot
+		# nodes (diskNsMsK — the sealed system volume mounted at / on 11+).
 		block_devices = []
 		try:
 			for entry in os.listdir("/dev"):
-				if re.match(r"^disk\d+(s\d+)?$", entry):
+				if re.match(r"^disk\d+(s\d+)*$", entry):
 					block_devices.append(f"/dev/{entry}")
 		except Exception:
 			pass
@@ -549,6 +591,38 @@ def is_block_device(devpath):
 	except Exception:
 		return False
 
+def get_mapper_path(device_name):
+	"""Map /dev/dm-N to its /dev/mapper/<name> alias (e.g. pve-root); other
+	devices are returned unchanged."""
+	if IS_DARWIN or not os.path.basename(device_name).startswith('dm-'):
+		return device_name
+	dm_name = read_text(os.path.join('/sys/class/block', os.path.basename(device_name), 'dm', 'name'))
+	return '/dev/mapper/' + dm_name if dm_name else device_name
+
+def display_device_name(device_path, full):
+	"""Shown NAME: the full path with -R/--full, else without the /dev(/mapper)/ prefix.
+
+	>>> display_device_name('/dev/mapper/pve-root', False)
+	'pve-root'
+	>>> display_device_name('/dev/sda1', False)
+	'sda1'
+	>>> display_device_name('/dev/sda1', True)
+	'/dev/sda1'
+	"""
+	if full:
+		return device_path
+	for prefix in ('/dev/mapper/', '/dev/'):
+		if device_path.startswith(prefix):
+			return device_path[len(prefix):]
+	return device_path
+
+def has_sysfs_device(disk):
+	"""True if the disk is backed by real hardware (sysfs 'device' link).
+
+	loop, dm, md, zram and nbd devices have no such link and no SMART data.
+	"""
+	return os.path.exists(os.path.join('/sys/class/block', os.path.basename(disk), 'device'))
+
 def is_partition(sysfs_block_path):
 	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
 		return False
@@ -560,7 +634,7 @@ def get_partition_parent_name(name):
 		return None
 	name = os.path.basename(name)
 	if IS_DARWIN:
-		match = re.match(r"^(disk\d+)s\d+$", name)
+		match = re.match(r"^(disk\d+)(s\d+)+$", name)
 		if match:
 			parent = os.path.join("/dev", match.group(1))
 			return parent if is_block_device(parent) else None
@@ -574,19 +648,6 @@ def get_partition_parent_name(name):
 		return os.path.join('/dev', name) if is_block_device(os.path.join('/dev', name)) else None
 	parent = os.path.basename(os.path.dirname(sysfs_block_path))
 	return os.path.join('/dev', parent) if parent and parent != name else None
-
-@cache_decorator
-def get_sector_size(sysfs_block_path):
-	if IS_DARWIN:
-		return 512
-	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
-		return 512
-	if get_partition_parent_name(sysfs_block_path):
-		sysfs_block_path = os.path.join('/sys/class/block', os.path.basename(get_partition_parent_name(sysfs_block_path)))
-	sector_size = read_int(os.path.join(sysfs_block_path, "queue", "hw_sector_size"))
-	if sector_size == 0:
-		sector_size = read_int(os.path.join(sysfs_block_path, "queue", "logical_block_size"))
-	return sector_size if sector_size else 512
 
 # Kernel block layer always reports /sys/block/*/stat sector counts in 512-byte
 # units, regardless of queue/hw_sector_size or logical_block_size.
@@ -667,30 +728,61 @@ def get_read_write_rate_throughput_iter(sysfs_block_path):
 			debug_exc('throughput poll', e)
 			yield 0, 0
 
+def natural_sort_key(text):
+	"""Sort key that orders embedded numbers numerically.
+
+	>>> sorted(['sda10', 'sda2', 'sda1'], key=natural_sort_key)
+	['sda1', 'sda2', 'sda10']
+	"""
+	# re.split with a capture group alternates text/number, so positions line up.
+	return [int(part) if i % 2 else part for i, part in enumerate(re.split(r'(\d+)', text))]
+
+def _remaining(deadline):
+	"""Seconds left until a time.monotonic() deadline (None = no deadline)."""
+	if deadline is None:
+		return None
+	return max(0.0, deadline - time.monotonic())
+
+def parse_smart_health(lines):
+	"""Extract the health verdict from `smartctl -H` output.
+
+	>>> parse_smart_health(['SMART overall-health self-assessment test result: PASSED'])
+	'OK'
+	>>> parse_smart_health(['SMART Health Status: OK'])
+	'OK'
+	>>> parse_smart_health(['Smartctl open device: /dev/sda failed: Permission denied'])
+	'DENIED'
+	>>> parse_smart_health(['/dev/sda: Unable to detect device type'])
+	''
+	"""
+	for line in lines:
+		line = line.lower()
+		if "health" in line:
+			return line.rpartition(':')[2].strip().upper().replace('PASSED', 'OK')
+		if "denied" in line:
+			return 'DENIED'
+	return ''
+
 ALL_OUTPUT_FIELDS = ["NAME", "FSTYPE", "SIZE", "FSUSE%", "MOUNTPOINT", "SMART", "LABEL", "UUID", "MODEL", "SERIAL", "DISCARD", "READ", "WRITE"]
 
-# DRIVE_INFO = namedtuple("DRIVE_INFO", 
-# 	["NAME", "FSTYPE", "SIZE", "FSUSEPCT", "MOUNTPOINT", "SMART","RTPT",'WTPT', "LABEL", "UUID", "MODEL", "SERIAL", "DISCARD"])
 def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, best_only=False, 
 					formated_only=False, show_zero_size_devices=False,pseudo=False,tptDict=None,
 					full=False,active_only=False,output="all",exclude="",
 					filter_patterns=None,invert_match=False,match_devname_only=False,timeout=None,
 					debug=False):
-	global SMARTCTL_PATH
-	global ALL_OUTPUT_FIELDS
 	global _DEBUG_MODE
 	if debug:
 		_DEBUG_MODE = True
 	if tptDict is None:
 		tptDict = {}
-	# Refresh mount/diskutil caches each call so watch mode picks up remounts,
-	# label/size/UUID changes, etc. Throughput iterators in tptDict stay live.
-	if hasattr(parseMount, 'cache_clear'):
-		parseMount.cache_clear()
-	if hasattr(get_macos_diskutil_info, 'cache_clear'):
-		get_macos_diskutil_info.cache_clear()
+	# One deadline for the whole refresh: a smartctl stuck in D-state on a dying
+	# disk can't be killed, so waiting `timeout` per partition would add up.
+	deadline = time.monotonic() + timeout if timeout else None
+	# Refresh every cache each call so watch mode picks up remounts, hot-swapped
+	# drives, label/size/UUID changes, etc. Throughput iterators in tptDict stay live.
+	clear_caches()
 	if output == "all":
-		output_fields = ALL_OUTPUT_FIELDS
+		output_fields = list(ALL_OUTPUT_FIELDS)
 	else:
 		output_fields = [x.strip().upper() for x in output.split(',')]
 		for field in output_fields:
@@ -707,25 +799,23 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 		return []
 	output_list = [output_fields]
 	output_fields_set = set(output_fields)
+	if 'SMART' in output_fields_set and not SMARTCTL_PATH:
+		debug_msg('SMART', 'smartctl not found in PATH or ' + os.pathsep.join(SMARTCTL_FALLBACK_DIRS) + '; SMART column will be empty')
 	macos_info = {}
 	if IS_DARWIN and {'SIZE','FSTYPE','UUID','LABEL','MODEL','SERIAL','DISCARD'}.intersection(output_fields_set):
 		macos_info = get_macos_diskutil_info(timeout=timeout if timeout else 4)
-	if (not IS_DARWIN) and {'SIZE','FSTYPE','UUID','LABEL'}.intersection(output_fields_set):
-		if lsblk_supports_pairs():
-			lsblk_cmd = 'lsblk -b -n -p -o NAME,SIZE,FSTYPE,UUID,LABEL -P'
-			lsblk_pairs_format = True
-		else:
-			lsblk_cmd = 'lsblk -brnp -o NAME,SIZE,FSTYPE,UUID,LABEL'
-			lsblk_pairs_format = False
+	if (not IS_DARWIN) and LSBLK_FIELDS.intersection(output_fields_set):
+		lsblk_cmd = 'lsblk -b -n -p -o NAME,SIZE,FSTYPE,UUID,LABEL,MODEL,SERIAL -P'
 		lsblk_result = multiCMD.run_command(lsblk_cmd, timeout=timeout, quiet=True, wait_for_return=False, return_object=True)
 	block_devices = get_blocks()
 	for stale_device in [k for k in tptDict if k not in block_devices]:
 		del tptDict[stale_device]
 	smart_infos = {}
+	smart_status = {}
 	for block_device in block_devices:
 		if 'SMART' in output_fields_set and SMARTCTL_PATH:
 			parent_name = get_partition_parent_name(block_device)
-			if parent_name:
+			if parent_name and (IS_DARWIN or has_sysfs_device(parent_name)):
 				if parent_name not in smart_infos:
 					smart_infos[parent_name] = multiCMD.run_command(f'{SMARTCTL_PATH} -H {parent_name}',timeout=timeout,quiet=True,wait_for_return=False,return_object=True)
 		if block_device not in tptDict:
@@ -742,11 +832,11 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 		pattern = compile_filter_pattern(filter_patterns)
 		filtered_devices = set()
 		for device in target_devices:
-			match = pattern.search(device)
+			match = pattern.search(device) or pattern.search(get_mapper_path(device))
 			if (match and not invert_match) or (not match and invert_match):
 				filtered_devices.add(device)
 		target_devices = filtered_devices
-	target_devices = sorted(target_devices)
+	target_devices = sorted(target_devices, key=natural_sort_key)
 	uuid_dict = {}
 	if 'UUID' in output_fields_set:
 		uuid_dict = build_symlink_dict("/dev/disk/by-uuid")
@@ -755,10 +845,13 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 		label_dict = build_symlink_dict("/dev/disk/by-label")
 	fstype_dict = {}
 	size_dict = {}
-	if (not IS_DARWIN) and {'SIZE','FSTYPE','UUID','LABEL'}.intersection(output_fields_set):
+	model_dict = {}
+	serial_dict = {}
+	if (not IS_DARWIN) and LSBLK_FIELDS.intersection(output_fields_set):
 		lsblk_result.thread.join(timeout)
 		if lsblk_result.returncode == 0:
-			populate_lsblk_dicts(lsblk_result.stdout, output_fields_set, uuid_dict, fstype_dict, label_dict, size_dict, lsblk_pairs_format)
+			populate_lsblk_dicts(lsblk_result.stdout, output_fields_set, uuid_dict, fstype_dict, label_dict, size_dict,
+								model_dict=model_dict, serial_dict=serial_dict)
 	if IS_DARWIN:
 		for devname, info in macos_info.items():
 			if 'UUID' in output_fields_set and info.get('UUID'):
@@ -775,7 +868,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 		if active_only and device_name not in tptDict:
 			continue
 		device_properties = defaultdict(str)
-		device_properties['NAME'] = device_name if full else device_name.replace('/dev/', '')
+		device_properties['NAME'] = display_device_name(get_mapper_path(device_name), full)
 		# fstype, size, fsuse%, mountpoint, rtpt, wtpt, lable, uuid are partition specific
 		# smart, model, serial, discard are device specific, and only for block devices
 		# fstype, size, fsuse%, mountpoint does not require block device and can have multiple values per device
@@ -787,8 +880,12 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 					device_properties['MODEL'] = di.get('MODEL', '')
 					device_properties['SERIAL'] = di.get('SERIAL', '')
 				else:
+					# Prefer udev values from lsblk (full model, real serial); sysfs only
+					# has the 16-byte SCSI model and falls back to the WWN for serial.
 					parent_sysfs_path = os.path.realpath(os.path.join('/sys/class/block', os.path.basename(parent_name))) if parent_name else None
-					device_properties['MODEL'], device_properties['SERIAL'] = read_model_and_serial(parent_sysfs_path)
+					sysfs_model, sysfs_serial = read_model_and_serial(parent_sysfs_path)
+					device_properties['MODEL'] = model_dict.get(parent_name) or sysfs_model
+					device_properties['SERIAL'] = serial_dict.get(parent_name) or sysfs_serial
 			if 'DISCARD' in output_fields_set:
 				if IS_DARWIN:
 					di = macos_info.get(parent_name or device_name, {})
@@ -796,19 +893,15 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 				else:
 					parent_sysfs_path = os.path.realpath(os.path.join('/sys/class/block', os.path.basename(parent_name))) if parent_name else None
 					device_properties['DISCARD'] = read_discard_support(parent_sysfs_path)
-			if parent_name in smart_infos and SMARTCTL_PATH:
-				smart_info_obj = smart_infos[parent_name]
-				smart_info_obj.thread.join(timeout)
-				for line in smart_info_obj.stdout:
-					line = line.lower()
-					if "health" in line:
-						smartinfo = line.rpartition(':')[2].strip().upper()
-						device_properties['SMART'] = smartinfo.replace('PASSED', 'OK')
-						break
-					elif "denied" in line:
-						device_properties['SMART'] = 'DENIED'
-						break
-			#size_bytes = read_size(os.path.join('/sys/class/block', os.path.basename(device_name)))
+			if parent_name in smart_infos:
+				if parent_name not in smart_status:
+					smart_info_obj = smart_infos[parent_name]
+					smart_info_obj.thread.join(_remaining(deadline))
+					if smart_info_obj.thread.is_alive():
+						smart_status[parent_name] = 'TIMEOUT'
+					else:
+						smart_status[parent_name] = parse_smart_health(smart_info_obj.stdout)
+				device_properties['SMART'] = smart_status[parent_name]
 		if device_name in tptDict:
 			try:
 				device_properties['READ'], device_properties['WRITE'] = next(tptDict[device_name])
@@ -838,7 +931,15 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 				if formated_only and not device_properties['FSTYPE']:
 					continue
 				device_properties['MOUNTPOINT'] = mount_entry.MOUNTPOINT
-				size_bytes, used_bytes, avail_bytes = get_statvfs_use_size(device_properties['MOUNTPOINT'])
+				statvfs_wait = None if deadline is None else max(_remaining(deadline), STATVFS_MIN_WAIT)
+				usage = get_statvfs_use_size(device_properties['MOUNTPOINT'], timeout=statvfs_wait)
+				if usage is None:
+					# Hung network mount: always show it, it's what you'd want to see.
+					device_properties['SIZE'] = ''
+					device_properties['FSUSE%'] = 'TIMEOUT'
+					output_list.append([device_properties[output_field] for output_field in output_fields])
+					continue
+				size_bytes, used_bytes, avail_bytes = usage
 				if size_bytes == 0 and not show_zero_size_devices:
 					continue
 				# Match GNU df Use%: used / (used + avail for non-root), with
@@ -863,7 +964,9 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			if IS_DARWIN:
 				size_bytes = size_dict.get(device_name, macos_info.get(device_name, {}).get('SIZE_BYTES', 0))
 			else:
-				size_bytes = size_dict.get(device_name, read_size(os.path.join('/sys/class/block', os.path.basename(device_name))))
+				size_bytes = size_dict.get(device_name)
+				if size_bytes is None:
+					size_bytes = read_size(os.path.join('/sys/class/block', os.path.basename(device_name)))
 			if size_bytes == 0 and not show_zero_size_devices:
 				continue
 			if print_bytes:
@@ -871,25 +974,48 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			else:
 				device_properties['SIZE'] = multiCMD.format_bytes(size_bytes, use_1024_bytes=use_1024, to_str=True) + 'B'
 			output_list.append([device_properties[output_field] for output_field in output_fields])
-		multiCMD.join_threads(timeout=timeout)
-	if not match_devname_only:
-		if filter_patterns:
-			pattern = compile_filter_pattern(filter_patterns)
-			filtered_output_list = [output_list[0]]  # include header
-			for row in output_list[1:]:
-				match = any(pattern.search(field) for field in row)
-				if (match and not invert_match) or (not match and invert_match):
-					filtered_output_list.append(row)
-			output_list = filtered_output_list
-		elif invert_match:
-			# if no patterns but invert_match is set, return only header
-			output_list = [output_list[0]]
+	multiCMD.join_threads(timeout=_remaining(deadline))
+	if filter_patterns and not match_devname_only:
+		pattern = compile_filter_pattern(filter_patterns)
+		filtered_output_list = [output_list[0]]  # include header
+		for row in output_list[1:]:
+			match = any(pattern.search(field) for field in row)
+			if (match and not invert_match) or (not match and invert_match):
+				filtered_output_list.append(row)
+		output_list = filtered_output_list
+	elif invert_match and not filter_patterns:
+		# if no patterns but invert_match is set, return only header (with or without -D)
+		output_list = [output_list[0]]
 	return output_list
+
+
+def rows_to_objects(rows):
+	"""Turn get_drives_info(print_bytes=True) rows into one dict per row, with
+	SIZE/READ/WRITE as integer bytes and FSUSE% as an integer percent (None
+	when empty, N/A or TIMEOUT).
+
+	>>> rows_to_objects([['NAME', 'SIZE', 'FSUSE%'], ['sda1', '1000', '35%'], ['sda2', '', 'N/A']])
+	[{'NAME': 'sda1', 'SIZE': 1000, 'FSUSE%': 35}, {'NAME': 'sda2', 'SIZE': None, 'FSUSE%': None}]
+	"""
+	if not rows:
+		return []
+	objects = []
+	for row in rows[1:]:
+		obj = {}
+		for field, value in zip(rows[0], row):
+			if field in ('SIZE', 'READ', 'WRITE'):
+				value = int(value) if value.isdigit() else None
+			elif field == 'FSUSE%':
+				value = int(value[:-1]) if value.endswith('%') and value[:-1].isdigit() else None
+			obj[field] = value
+		objects.append(obj)
+	return objects
 
 
 def main():
 	parser = argparse.ArgumentParser(description="Gather disk and partition info for block devices.")
-	parser.add_argument('-j','--json', help="Produce JSON output", action="store_true")
+	parser.add_argument('-j','--json', help="Produce JSON output (list of rows, header first)", action="store_true")
+	parser.add_argument('-J','--json_objects', help="Produce JSON output as a list of objects with numeric SIZE/READ/WRITE (bytes) and FSUSE%% (percent)", action="store_true")
 	parser.add_argument('-b','--bytes', help="Print the SIZE column in bytes rather than in a human-readable format", action="store_true")
 	parser.add_argument('-H','--si', help="Use powers of 1000 not 1024 for SIZE column", action="store_true")
 	parser.add_argument('-F','-fo','--formated_only', help="Show only formated filesystems", action="store_true")
@@ -932,28 +1058,41 @@ def main():
 			except Exception:
 				pass
 	multiCMD.set_sudo(args.sudo)
-	while True:
-		results = get_drives_info(print_bytes = args.bytes, use_1024 = not args.si, 
-							mounted_only=args.mounted_only, best_only=args.best_only, 
-							formated_only=args.formated_only, show_zero_size_devices=args.show_zero_size_devices,
-							pseudo=args.pseudo,tptDict=tptDict,full=args.full,active_only=args.active_only,
-							output=args.output,exclude=args.exclude,
-							filter_patterns=args.filter_patterns,invert_match=args.invert_match,match_devname_only=args.match_devname_only,
-							timeout=args.timeout,debug=args.debug,
-							)
-		if args.json:
-			import json
-			print(json.dumps(results, indent=1),flush=True)
-		else:
-			print(multiCMD.pretty_format_table(results,full=args.full),flush=True)
-		if print_period > 0:
-			try:
-				time.sleep(print_period)
-				args.active_only = True
-			except KeyboardInterrupt:
+	try:
+		while True:
+			results = get_drives_info(print_bytes = args.bytes or args.json_objects, use_1024 = not args.si, 
+								mounted_only=args.mounted_only, best_only=args.best_only, 
+								formated_only=args.formated_only, show_zero_size_devices=args.show_zero_size_devices,
+								pseudo=args.pseudo,tptDict=tptDict,full=args.full,active_only=args.active_only,
+								output=args.output,exclude=args.exclude,
+								filter_patterns=args.filter_patterns,invert_match=args.invert_match,match_devname_only=args.match_devname_only,
+								timeout=args.timeout,debug=args.debug,
+								)
+			if args.json_objects:
+				import json
+				print(json.dumps(rows_to_objects(results), indent=1),flush=True)
+			elif args.json:
+				import json
+				print(json.dumps(results, indent=1),flush=True)
+			else:
+				print(multiCMD.pretty_format_table(results,full=args.full),flush=True)
+			if print_period <= 0:
 				break
-		else:
-			break
+			time.sleep(print_period)
+			# Throughput is always 0 on macOS, so active_only would hide every row.
+			if not IS_DARWIN:
+				args.active_only = True
+	except KeyboardInterrupt:
+		return 130
+	except BrokenPipeError:
+		# Reader went away (e.g. `statblk 1 | head`). Point stdout at devnull so the
+		# interpreter's exit-time flush doesn't raise a second BrokenPipeError.
+		try:
+			devnull = os.open(os.devnull, os.O_WRONLY)
+			os.dup2(devnull, sys.stdout.fileno())
+		except (OSError, ValueError):
+			pass
+		return 1
 
 
 if __name__ == "__main__":
@@ -962,4 +1101,4 @@ if __name__ == "__main__":
 		sys.argv.pop(1)
 		result = doctest.testmod(optionflags=doctest.NORMALIZE_WHITESPACE)
 		sys.exit(0 if result.failed == 0 else 1)
-	main()
+	sys.exit(main())

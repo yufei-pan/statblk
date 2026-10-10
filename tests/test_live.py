@@ -57,7 +57,7 @@ def test_live_strict_names_subset_of_lsblk():
 	rows = statblk.get_drives_info(output="NAME", show_zero_size_devices=True, timeout=5)
 	names = {r[0].replace("/dev/", "") for r in rows[1:]}
 	# -l: no tree glyphs; -a: include empty loops present in sysfs;
-	# KNAME: kernel names (dm-N) matching sysfs, not mapper aliases (pve-root).
-	lsblk = subprocess.check_output(["lsblk", "-n", "-l", "-a", "-o", "KNAME"], text=True)
-	lsblk_names = {line.strip() for line in lsblk.splitlines() if line.strip()}
+	# KNAME + NAME: kernel names (dm-N) and mapper aliases (pve-root, shown for dm).
+	lsblk = subprocess.check_output(["lsblk", "-n", "-l", "-a", "-o", "KNAME,NAME"], text=True)
+	lsblk_names = {name for line in lsblk.splitlines() for name in line.split()}
 	assert names <= lsblk_names

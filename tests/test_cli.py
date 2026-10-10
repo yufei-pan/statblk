@@ -77,3 +77,104 @@ def test_json_output(monkeypatch, capsys):
     statblk.main()
     data = json.loads(capsys.readouterr().out)
     assert data[0] == ["NAME"]
+
+
+def _sleep_once_then_interrupt():
+    calls = []
+
+    def sleep(s):
+        calls.append(s)
+        if len(calls) > 1:
+            raise KeyboardInterrupt()
+
+    return sleep
+
+
+@pytest.mark.parametrize("darwin, expected", [
+    (False, [False, True]),  # Linux: auto-enable after first refresh
+    (True, [False, False]),  # macOS: no throughput data, so never auto-enable
+])
+def test_watch_auto_active_only(monkeypatch, darwin, expected):
+    seen = []
+
+    def fake_gdi(**kwargs):
+        seen.append(kwargs["active_only"])
+        return [["NAME"], ["disk0"]]
+
+    monkeypatch.setattr(statblk, "IS_DARWIN", darwin)
+    monkeypatch.setattr(statblk, "get_drives_info", fake_gdi)
+    monkeypatch.setattr(statblk.multiCMD, "set_sudo", lambda x: None)
+    monkeypatch.setattr(statblk.multiCMD, "pretty_format_table", lambda r, **k: "T")
+    monkeypatch.setattr(statblk.time, "sleep", _sleep_once_then_interrupt())
+    monkeypatch.setattr(statblk.sys, "argv", ["statblk", "-w", "1"])
+    statblk.main()
+    assert seen == expected
+
+
+def _patch_main_basics(monkeypatch, gdi):
+    monkeypatch.setattr(statblk, "get_drives_info", gdi)
+    monkeypatch.setattr(statblk.multiCMD, "set_sudo", lambda x: None)
+    monkeypatch.setattr(statblk.multiCMD, "pretty_format_table", lambda r, **k: "T")
+
+
+def test_ctrl_c_during_refresh_exits_130(monkeypatch):
+    def interrupted_gdi(**kwargs):
+        raise KeyboardInterrupt()
+
+    _patch_main_basics(monkeypatch, interrupted_gdi)
+    monkeypatch.setattr(statblk.sys, "argv", ["statblk", "-w", "1"])
+    assert statblk.main() == 130
+
+
+def test_ctrl_c_during_sleep_exits_130(monkeypatch):
+    _patch_main_basics(monkeypatch, lambda **k: [["NAME"]])
+    monkeypatch.setattr(statblk.time, "sleep", lambda s: (_ for _ in ()).throw(KeyboardInterrupt()))
+    monkeypatch.setattr(statblk.sys, "argv", ["statblk", "-w", "1"])
+    assert statblk.main() == 130
+
+
+def test_single_run_returns_success(monkeypatch):
+    _patch_main_basics(monkeypatch, lambda **k: [["NAME"]])
+    monkeypatch.setattr(statblk.sys, "argv", ["statblk"])
+    assert not statblk.main()
+
+
+class _ClosedPipe:
+    def write(self, _s):
+        raise BrokenPipeError()
+
+    def flush(self):
+        raise BrokenPipeError()
+
+    def fileno(self):
+        raise OSError("no fd")
+
+
+def test_broken_pipe_exits_quietly(monkeypatch):
+    _patch_main_basics(monkeypatch, lambda **k: [["NAME"]])
+    monkeypatch.setattr(statblk.sys, "stdout", _ClosedPipe())
+    monkeypatch.setattr(statblk.sys, "argv", ["statblk"])
+    assert statblk.main() == 1
+
+
+def test_json_objects_output(monkeypatch, capsys):
+    seen = {}
+
+    def fake_gdi(**kwargs):
+        seen.update(kwargs)
+        return [
+            ["NAME", "SIZE", "FSUSE%", "READ", "WRITE", "MOUNTPOINT"],
+            ["sda1", "1000", "35%", "512", "0", "/data"],
+            ["sda2", "2000", "", "", "", ""],
+            ["host:/export", "", "TIMEOUT", "", "", "/mnt/gone"],
+        ]
+
+    _patch_main_basics(monkeypatch, fake_gdi)
+    monkeypatch.setattr(statblk.sys, "argv", ["statblk", "-J"])
+    statblk.main()
+    assert seen["print_bytes"] is True  # raw byte counts regardless of -b
+    assert json.loads(capsys.readouterr().out) == [
+        {"NAME": "sda1", "SIZE": 1000, "FSUSE%": 35, "READ": 512, "WRITE": 0, "MOUNTPOINT": "/data"},
+        {"NAME": "sda2", "SIZE": 2000, "FSUSE%": None, "READ": None, "WRITE": None, "MOUNTPOINT": ""},
+        {"NAME": "host:/export", "SIZE": None, "FSUSE%": None, "READ": None, "WRITE": None, "MOUNTPOINT": "/mnt/gone"},
+    ]

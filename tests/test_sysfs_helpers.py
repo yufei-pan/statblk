@@ -1,20 +1,7 @@
 import os
 
 import statblk
-from fakes import make_sysfs_block
-
-
-def _redirect_sys_class_block(tmp_path, monkeypatch):
-    """Point hardcoded /sys/class/block joins at tmp_path/sys/class/block."""
-    fake = str(tmp_path / "sys" / "class" / "block")
-    real_join = os.path.join
-
-    def join(a, *parts):
-        if a == "/sys/class/block":
-            return real_join(fake, *parts)
-        return real_join(a, *parts)
-
-    monkeypatch.setattr(os.path, "join", join)
+from fakes import make_sysfs_block, redirect_sys_class_block
 
 
 def test_read_size_uses_512(tmp_path):
@@ -54,7 +41,7 @@ def test_get_partition_parent_name_disk_vs_partition(tmp_path, monkeypatch):
     class_block = tmp_path / "sys" / "class" / "block"
     (class_block / "sda1").symlink_to(os.path.relpath(part_real, class_block))
 
-    _redirect_sys_class_block(tmp_path, monkeypatch)
+    redirect_sys_class_block(tmp_path, monkeypatch)
     monkeypatch.setattr(statblk, "is_block_device", lambda p: p == "/dev/sda")
     for fn in (statblk.get_partition_parent_name, statblk.is_block_device):
         clear = getattr(fn, "cache_clear", None)
@@ -64,3 +51,36 @@ def test_get_partition_parent_name_disk_vs_partition(tmp_path, monkeypatch):
     assert statblk.get_partition_parent_name("sda") == "/dev/sda"
     assert statblk.get_partition_parent_name("sda1") == "/dev/sda"
     assert statblk.get_partition_parent_name("/dev/sda1") == "/dev/sda"
+
+
+def _make_executable(path):
+    path.write_text("#!/bin/sh\n")
+    path.chmod(0o755)
+    return path
+
+
+def test_find_smartctl_falls_back_to_sbin_dirs(tmp_path, monkeypatch):
+    # Debian's non-root PATH omits /usr/sbin where smartmontools installs.
+    user_bin = tmp_path / "bin"
+    user_bin.mkdir()
+    sbin = tmp_path / "sbin"
+    sbin.mkdir()
+    smartctl = _make_executable(sbin / "smartctl")
+    monkeypatch.setenv("PATH", str(user_bin))
+    assert statblk.find_smartctl(fallback_dirs=[str(sbin)]) == str(smartctl)
+
+
+def test_find_smartctl_prefers_path(tmp_path, monkeypatch):
+    user_bin = tmp_path / "bin"
+    user_bin.mkdir()
+    on_path = _make_executable(user_bin / "smartctl")
+    sbin = tmp_path / "sbin"
+    sbin.mkdir()
+    _make_executable(sbin / "smartctl")
+    monkeypatch.setenv("PATH", str(user_bin))
+    assert statblk.find_smartctl(fallback_dirs=[str(sbin)]) == str(on_path)
+
+
+def test_find_smartctl_missing(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert statblk.find_smartctl(fallback_dirs=[str(tmp_path)]) is None

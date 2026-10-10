@@ -1,25 +1,24 @@
+import os
+
 import pytest
 
 import statblk
-from fakes import LSBLK_PAIRS_SAMPLE, LSBLK_RAW_SAMPLE
+from fakes import LSBLK_PAIRS_SAMPLE
 
 
 def test_parse_lsblk_pairs_label_with_spaces():
-    name, size, fstype, uuid, label = statblk.parse_lsblk_pairs_line(LSBLK_PAIRS_SAMPLE[0])
-    assert name == "/dev/sda1"
-    assert label == "boot vol"
-    assert size == "1073741824"
+    fields = statblk.parse_lsblk_pairs_line(LSBLK_PAIRS_SAMPLE[0])
+    assert fields["NAME"] == "/dev/sda1"
+    assert fields["LABEL"] == "boot vol"
+    assert fields["SIZE"] == "1073741824"
 
 
-def test_parse_lsblk_raw_label_with_spaces():
-    name, size, fstype, uuid, label = statblk.parse_lsblk_raw_line(LSBLK_RAW_SAMPLE[0])
-    assert label == "boot vol"
-    assert fstype == "ext4"
-
-
-def test_parse_lsblk_raw_short_line():
-    name, size, fstype, uuid, label = statblk.parse_lsblk_raw_line("/dev/sda 100")
-    assert (name, size, fstype, uuid, label) == ("/dev/sda", "100", "", "", "")
+def test_parse_lsblk_pairs_decodes_hex_escapes():
+    # lsblk -P escapes " \\ ` $ and non-printable bytes (incl. UTF-8) as \\xNN.
+    fields = statblk.parse_lsblk_pairs_line(
+        'NAME="/dev/sdb1" LABEL="say\\x22hi\\x22 \\xe6\\x97\\xa5"'
+    )
+    assert fields["LABEL"] == 'say"hi" 日'
 
 
 def test_compile_filter_invalid_regex_exits(capsys):
@@ -31,3 +30,25 @@ def test_compile_filter_invalid_regex_exits(capsys):
 
 def test_decode_proc_path_space():
     assert statblk._decode_proc_path("/mnt\\040disk") == "/mnt disk"
+
+
+def test_decode_proc_path_tab_newline_backslash():
+    assert statblk._decode_proc_path("/mnt/a\\011b\\012c\\134d") == "/mnt/a\tb\nc\\d"
+
+
+def test_mountinfo_mountpoint_with_backslash():
+    dev, ent = statblk.parse_mountinfo_line(
+        "100 99 8:1 / /mnt/back\\134slash rw - ext4 /dev/sdz1 rw"
+    )
+    assert ent.MOUNTPOINT == "/mnt/back\\slash"
+
+
+def test_build_symlink_dict_decodes_udev_escapes(tmp_path):
+    target = tmp_path / "sdz1"
+    target.write_text("")
+    by_label = tmp_path / "by-label"
+    by_label.mkdir()
+    os.symlink(target, by_label / "my\\x20label")
+    mapping = statblk.build_symlink_dict(str(by_label))
+    assert mapping == {str(target): "my label"}
+
