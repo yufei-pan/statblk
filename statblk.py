@@ -155,7 +155,7 @@ def clear_caches():
 	for fn in _CACHED_FUNCTIONS:
 		fn.cache_clear()
 
-version = '1.51'
+version = '1.52'
 VERSION = version
 __version__ = version
 COMMIT_DATE = '2026-10-10'
@@ -791,6 +791,94 @@ def parse_smart_health(lines):
 
 ALL_OUTPUT_FIELDS = ["NAME", "FSTYPE", "SIZE", "FSUSE%", "MOUNTPOINT", "SMART", "LABEL", "UUID", "MODEL", "SERIAL", "DISCARD", "READ", "WRITE"]
 
+def resolve_output_fields(output, exclude):
+	"""Selected columns in order: -o (every column for "all") minus -x.
+	Unknown names are reported on stderr and dropped.
+
+	>>> resolve_output_fields('all', 'uuid, LABEL')[:5]
+	['NAME', 'FSTYPE', 'SIZE', 'FSUSE%', 'MOUNTPOINT']
+	>>> 'UUID' in resolve_output_fields('all', 'uuid, LABEL')
+	False
+	>>> resolve_output_fields('name, size', '')
+	['NAME', 'SIZE']
+	"""
+	if output == "all":
+		output_fields = list(ALL_OUTPUT_FIELDS)
+	else:
+		output_fields = [x.strip().upper() for x in output.split(',')]
+		for field in output_fields:
+			if field not in ALL_OUTPUT_FIELDS:
+				print(f"Ignoring invalid output field: {field}.", file=sys.stderr)
+		output_fields = [f for f in output_fields if f in ALL_OUTPUT_FIELDS]
+	if exclude:
+		exclude_fields = [x.strip().upper() for x in exclude.split(',')]
+		for field in exclude_fields:
+			if field in output_fields:
+				output_fields.remove(field)
+	return output_fields
+
+def keep_fstype(device_name, fstype, formated_only, show_squashfs):
+	"""Row filters that only need the filesystem type, checked before the
+	costly statvfs/sysfs reads: -F drops unformatted entries, and squashfs
+	loop images are hidden unless --show_squashfs.
+
+	>>> keep_fstype('/dev/sda1', '', True, False), keep_fstype('/dev/sda1', 'ext4', True, False)
+	(False, True)
+	>>> keep_fstype('/dev/loop0', 'squashfs', False, False), keep_fstype('/dev/loop0', 'squashfs', False, True)
+	(False, True)
+	"""
+	if formated_only and not fstype:
+		return False
+	return show_squashfs or not is_squashfs_loop(device_name, fstype)
+
+def df_use_percent(used_bytes, avail_bytes):
+	"""FSUSE% like GNU df Use%: used / (used + avail for non-root), rounded
+	up when not exact (coreutils-style); N/A when there is no space at all.
+
+	>>> df_use_percent(350, 650), df_use_percent(1, 2), df_use_percent(0, 0)
+	('35%', '34%', 'N/A')
+	"""
+	fs_denom = used_bytes + avail_bytes
+	if fs_denom <= 0:
+		return "N/A"
+	pct = (used_bytes * 100) // fs_denom
+	if (used_bytes * 100) % fs_denom:
+		pct += 1
+	return f"{pct}%"
+
+def format_size(size_bytes, print_bytes, use_1024):
+	"""SIZE cell: raw bytes with -b (and for -J), else human-readable.
+
+	>>> format_size(1536, True, True), format_size(1536, False, True), format_size(1500, False, False)
+	('1536', '1.50 KiB', '1.50 KB')
+	"""
+	if print_bytes:
+		return str(size_bytes)
+	return multiCMD.format_bytes(size_bytes, use_1024_bytes=use_1024, to_str=True) + 'B'
+
+def format_rate(bytes_per_sec, print_bytes, use_1024):
+	"""READ/WRITE cell: raw bytes/s with -b (and for -J), else human-readable.
+
+	>>> format_rate(2048, True, True), format_rate(2048, False, True)
+	('2048', '2 KiB/s')
+	"""
+	if print_bytes:
+		return str(bytes_per_sec)
+	return multiCMD.format_bytes(bytes_per_sec, use_1024_bytes=use_1024, to_str=True, str_format='.0f') + 'B/s'
+
+def filter_rows(rows, filter_patterns, invert_match):
+	"""Keep the header and the rows where any cell matches a pattern (or
+	where none does, with invert_match).
+
+	>>> rows = [['NAME', 'FSTYPE'], ['sda1', 'ext4'], ['sdb1', 'xfs']]
+	>>> filter_rows(rows, ['ext'], False)
+	[['NAME', 'FSTYPE'], ['sda1', 'ext4']]
+	>>> filter_rows(rows, ['ext'], True)
+	[['NAME', 'FSTYPE'], ['sdb1', 'xfs']]
+	"""
+	pattern = compile_filter_pattern(filter_patterns)
+	return [rows[0]] + [row for row in rows[1:] if any(pattern.search(field) for field in row) != bool(invert_match)]
+
 def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, best_only=False, 
 					formated_only=False, show_zero_size_devices=False,show_squashfs=False,pseudo=False,tptDict=None,
 					full=False,active_only=False,output="all",exclude="",
@@ -807,19 +895,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	# Refresh every cache each call so watch mode picks up remounts, hot-swapped
 	# drives, label/size/UUID changes, etc. Throughput iterators in tptDict stay live.
 	clear_caches()
-	if output == "all":
-		output_fields = list(ALL_OUTPUT_FIELDS)
-	else:
-		output_fields = [x.strip().upper() for x in output.split(',')]
-		for field in output_fields:
-			if field not in ALL_OUTPUT_FIELDS:
-				print(f"Ignoring invalid output field: {field}.", file=sys.stderr)
-		output_fields = [f for f in output_fields if f in ALL_OUTPUT_FIELDS]
-	if exclude:
-		exclude_fields = [x.strip().upper() for x in exclude.split(',')]
-		for field in exclude_fields:
-			if field in output_fields:
-				output_fields.remove(field)
+	output_fields = resolve_output_fields(output, exclude)
 	if not output_fields:
 		print("No valid output fields specified.", file=sys.stderr)
 		return []
@@ -935,15 +1011,11 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 				device_properties['SMART'] = 'NO SMARTCTL'
 		if device_name in tptDict:
 			try:
-				device_properties['READ'], device_properties['WRITE'] = next(tptDict[device_name])
-				if active_only and device_properties['READ'] == 0 and device_properties['WRITE'] == 0:
+				read_bps, write_bps = next(tptDict[device_name])
+				if active_only and read_bps == 0 and write_bps == 0:
 					continue
-				if print_bytes:
-					device_properties['READ'] = str(device_properties['READ'])
-					device_properties['WRITE'] = str(device_properties['WRITE'])
-				else:
-					device_properties['READ'] = multiCMD.format_bytes(device_properties['READ'], use_1024_bytes=use_1024, to_str=True,str_format='.0f') + 'B/s'
-					device_properties['WRITE'] = multiCMD.format_bytes(device_properties['WRITE'], use_1024_bytes=use_1024, to_str=True,str_format='.0f') + 'B/s'
+				device_properties['READ'] = format_rate(read_bps, print_bytes, use_1024)
+				device_properties['WRITE'] = format_rate(write_bps, print_bytes, use_1024)
 			except Exception as e:
 				debug_exc('throughput format', e)
 				device_properties['READ'] = ''
@@ -959,9 +1031,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 		if mount_points:
 			for mount_entry in mount_points:
 				device_properties['FSTYPE'] = mount_entry.FSTYPE
-				if formated_only and not device_properties['FSTYPE']:
-					continue
-				if not show_squashfs and is_squashfs_loop(device_name, mount_entry.FSTYPE):
+				if not keep_fstype(device_name, mount_entry.FSTYPE, formated_only, show_squashfs):
 					continue
 				device_properties['MOUNTPOINT'] = mount_entry.MOUNTPOINT
 				statvfs_wait = None if deadline is None else max(_remaining(deadline), STATVFS_MIN_WAIT)
@@ -975,27 +1045,14 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 				size_bytes, used_bytes, avail_bytes = usage
 				if size_bytes == 0 and not show_zero_size_devices:
 					continue
-				# Match GNU df Use%: used / (used + avail for non-root), with
-				# ceiling when the ratio is not exact (coreutils-style).
-				fs_denom = used_bytes + avail_bytes
-				if fs_denom > 0:
-					pct = (used_bytes * 100) // fs_denom
-					if (used_bytes * 100) % fs_denom:
-						pct += 1
-					device_properties['FSUSE%'] = f"{pct}%"
-				else:
-					device_properties['FSUSE%'] = "N/A"
-				if print_bytes:
-					device_properties['SIZE'] = str(size_bytes)
-				else:
-					device_properties['SIZE'] = multiCMD.format_bytes(size_bytes, use_1024_bytes=use_1024, to_str=True) + 'B'
+				device_properties['FSUSE%'] = df_use_percent(used_bytes, avail_bytes)
+				device_properties['SIZE'] = format_size(size_bytes, print_bytes, use_1024)
 				output_list.append([device_properties[output_field] for output_field in output_fields])
 		else:
-			if formated_only and device_name not in fstype_dict:
-				continue
 			device_properties['FSTYPE'] = fstype_dict.get(device_name, '')
-			# Best effort: fstype_dict is only filled when FSTYPE is an output column.
-			if not show_squashfs and is_squashfs_loop(device_name, device_properties['FSTYPE']):
+			# fstype_dict only holds non-empty types. Squashfs hiding is best effort
+			# here: it is only filled when FSTYPE is collected (an output column or -F).
+			if not keep_fstype(device_name, device_properties['FSTYPE'], formated_only, show_squashfs):
 				continue
 			if IS_DARWIN:
 				size_bytes = size_dict.get(device_name, macos_info.get(device_name, {}).get('SIZE_BYTES', 0))
@@ -1005,20 +1062,11 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 					size_bytes = read_size(os.path.join('/sys/class/block', os.path.basename(device_name)))
 			if size_bytes == 0 and not show_zero_size_devices:
 				continue
-			if print_bytes:
-				device_properties['SIZE'] = str(size_bytes)
-			else:
-				device_properties['SIZE'] = multiCMD.format_bytes(size_bytes, use_1024_bytes=use_1024, to_str=True) + 'B'
+			device_properties['SIZE'] = format_size(size_bytes, print_bytes, use_1024)
 			output_list.append([device_properties[output_field] for output_field in output_fields])
 	multiCMD.join_threads(timeout=_remaining(deadline))
 	if filter_patterns and not match_devname_only:
-		pattern = compile_filter_pattern(filter_patterns)
-		filtered_output_list = [output_list[0]]  # include header
-		for row in output_list[1:]:
-			match = any(pattern.search(field) for field in row)
-			if (match and not invert_match) or (not match and invert_match):
-				filtered_output_list.append(row)
-		output_list = filtered_output_list
+		output_list = filter_rows(output_list, filter_patterns, invert_match)
 	elif invert_match and not filter_patterns:
 		# if no patterns but invert_match is set, return only header (with or without -D)
 		output_list = [output_list[0]]
