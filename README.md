@@ -145,7 +145,7 @@ mssh 'nodes[1-64]' 'statblk --check -M'                                  # whole
 
 Uses sysfs, `/proc/self/mountinfo`, `lsblk`, and optionally `smartctl`.
 
-- **SMART** requires `smartctl` (smartmontools). Use `--sudo` if permission is denied. It only runs against hardware-backed disks (not loop, dm, md, zram, nbd). smartctl runs with `-n standby`, so spun-down drives are not woken (not even by watch mode); they show `STANDBY` until they're next awake. On a hardware disk where SMART can't be read the column says why (`NO SMARTCTL`, `DENIED`, `UNKNOWN`); it is blank for virtual devices.
+- **SMART** requires `smartctl` (smartmontools). Use `--sudo` if permission is denied. It only runs against hardware-backed disks (not loop, dm, md, zram, nbd). smartctl runs with `-n standby`, so spun-down drives are not woken (not even by watch mode); they show `STANDBY` until they're next awake. This is verified for SATA drives on the kernel's libata driver; drives behind USB enclosures or some RAID/SAS controllers may still spin up, because smartctl's device-type probe goes through the bridge. On a hardware disk where SMART can't be read the column says why (`NO SMARTCTL`, `DENIED`, `UNKNOWN`); it is blank for virtual devices.
 - **squashfs on loop devices** (snap packages, AppImages) is hidden by default: these images are read-only and always 100% full. Use `--show_squashfs` to list them. Other loop devices, such as a mounted disk image, are always shown.
 - **autofs** trigger mounts are ignored (stat-ing them would trigger the automount); the real filesystem appears once mounted.
 - **READ / WRITE** throughput comes from `/sys/class/block/*/stat` (always 512-byte sector units).
