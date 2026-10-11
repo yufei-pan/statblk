@@ -540,3 +540,25 @@ def test_unmounted_squashfs_loop_hidden_by_lsblk_fstype(monkeypatch):
     assert rows[1:] == [["loop1", "ext4"]]
     shown = statblk.get_drives_info(output="NAME,FSTYPE", show_squashfs=True, timeout=2)
     assert [r[0] for r in shown[1:]] == ["loop0", "loop1"]
+
+
+_FORMATTED_AND_BLANK_LSBLK = [
+    'NAME="/dev/sda1" SIZE="1000" FSTYPE="ext4" UUID="u" LABEL="L"',
+    'NAME="/dev/sda2" SIZE="2000" FSTYPE="" UUID="" LABEL=""',
+]
+
+
+def test_formated_only_without_fstype_column(monkeypatch):
+    # -F needs FSTYPE even when it isn't a displayed column.
+    _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/sda2"], mounts=defaultdict(list))
+    _patch_multicmd(monkeypatch, FakeCmdResult(_FORMATTED_AND_BLANK_LSBLK, 0))
+    rows = statblk.get_drives_info(output="NAME,SIZE", formated_only=True, timeout=2)
+    assert rows == [["NAME", "SIZE"], ["sda1", "1000B"]]
+
+
+def test_formated_only_runs_lsblk_without_lsblk_columns(monkeypatch):
+    _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/sda2"], mounts=defaultdict(list))
+    commands = _patch_multicmd(monkeypatch, FakeCmdResult(_FORMATTED_AND_BLANK_LSBLK, 0))
+    rows = statblk.get_drives_info(output="NAME,MOUNTPOINT", formated_only=True, timeout=2)
+    assert any(cmd.startswith("lsblk") for cmd in commands)
+    assert rows == [["NAME", "MOUNTPOINT"], ["sda1", ""]]

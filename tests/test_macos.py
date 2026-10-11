@@ -1,6 +1,8 @@
 import os
 from collections import defaultdict
 
+import pytest
+
 import statblk
 from fakes import DARWIN_MOUNT_SAMPLE, DISKUTIL_INFO_ALL_SAMPLE
 
@@ -64,3 +66,20 @@ def test_darwin_sealed_root_listed_without_pseudo(monkeypatch):
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     rows = statblk.get_drives_info(output="NAME,MOUNTPOINT", timeout=2)
     assert rows[1:] == [["disk3s1s1", "/"]]
+
+
+@pytest.mark.parametrize("output", ["NAME,SIZE", "NAME,MOUNTPOINT"])
+def test_darwin_formated_only_without_fstype_column(monkeypatch, output):
+    monkeypatch.setattr(statblk, "IS_DARWIN", True)
+    _fake_dev_listing(monkeypatch, ["disk4s1", "disk4s2"])
+    monkeypatch.setattr(statblk, "parseMount", lambda: defaultdict(list))
+    monkeypatch.setattr(statblk, "is_block_device", lambda p: True)
+    info = {
+        "/dev/disk4s1": {"SIZE_BYTES": 1000, "FSTYPE": "ExFAT"},
+        "/dev/disk4s2": {"SIZE_BYTES": 2000, "FSTYPE": ""},
+    }
+    monkeypatch.setattr(statblk, "get_macos_diskutil_info", lambda timeout=4: info)
+    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
+    monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
+    rows = statblk.get_drives_info(output=output, formated_only=True, timeout=2)
+    assert [r[0] for r in rows[1:]] == ["disk4s1"]

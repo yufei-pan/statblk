@@ -154,7 +154,7 @@ def clear_caches():
 	for fn in _CACHED_FUNCTIONS:
 		fn.cache_clear()
 
-version = '1.46'
+version = '1.47'
 VERSION = version
 __version__ = version
 COMMIT_DATE = '2026-10-10'
@@ -810,12 +810,14 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 		return []
 	output_list = [output_fields]
 	output_fields_set = set(output_fields)
+	# Filters may need data that isn't a displayed column (-F needs FSTYPE).
+	collect_fields = (output_fields_set | {'FSTYPE'}) if formated_only else output_fields_set
 	if 'SMART' in output_fields_set and not SMARTCTL_PATH:
 		debug_msg('SMART', 'smartctl not found in PATH or ' + os.pathsep.join(SMARTCTL_FALLBACK_DIRS) + '; SMART column will be empty')
 	macos_info = {}
-	if IS_DARWIN and {'SIZE','FSTYPE','UUID','LABEL','MODEL','SERIAL','DISCARD'}.intersection(output_fields_set):
+	if IS_DARWIN and {'SIZE','FSTYPE','UUID','LABEL','MODEL','SERIAL','DISCARD'}.intersection(collect_fields):
 		macos_info = get_macos_diskutil_info(timeout=timeout if timeout else 4)
-	if (not IS_DARWIN) and LSBLK_FIELDS.intersection(output_fields_set):
+	if (not IS_DARWIN) and LSBLK_FIELDS.intersection(collect_fields):
 		lsblk_cmd = 'lsblk -b -n -p -o NAME,SIZE,FSTYPE,UUID,LABEL,MODEL,SERIAL -P'
 		lsblk_result = multiCMD.run_command(lsblk_cmd, timeout=timeout, quiet=True, wait_for_return=False, return_object=True)
 	block_devices = get_blocks()
@@ -858,16 +860,16 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	size_dict = {}
 	model_dict = {}
 	serial_dict = {}
-	if (not IS_DARWIN) and LSBLK_FIELDS.intersection(output_fields_set):
+	if (not IS_DARWIN) and LSBLK_FIELDS.intersection(collect_fields):
 		lsblk_result.thread.join(timeout)
 		if lsblk_result.returncode == 0:
-			populate_lsblk_dicts(lsblk_result.stdout, output_fields_set, uuid_dict, fstype_dict, label_dict, size_dict,
+			populate_lsblk_dicts(lsblk_result.stdout, collect_fields, uuid_dict, fstype_dict, label_dict, size_dict,
 								model_dict=model_dict, serial_dict=serial_dict)
 	if IS_DARWIN:
 		for devname, info in macos_info.items():
 			if 'UUID' in output_fields_set and info.get('UUID'):
 				uuid_dict[devname] = info['UUID']
-			if 'FSTYPE' in output_fields_set and info.get('FSTYPE'):
+			if 'FSTYPE' in collect_fields and info.get('FSTYPE'):
 				fstype_dict[devname] = info['FSTYPE']
 			if 'LABEL' in output_fields_set and info.get('LABEL'):
 				label_dict[devname] = info['LABEL']
