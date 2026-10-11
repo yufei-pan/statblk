@@ -87,6 +87,7 @@ Use `-o` / `--output` to select columns (comma-separated) or `-x` / `--exclude` 
 | `-A`, `-ao`, `--active_only` | Only devices with read/write activity |
 | `-P`, `--pseudo` | Include pseudo filesystems (tmpfs, nfs, cifs, …) |
 | `--show_zero_size_devices` | Include zero-size devices |
+| `--show_squashfs` | Include squashfs images on loop devices (snaps, AppImages), hidden by default |
 
 ### Runtime
 
@@ -125,6 +126,7 @@ statblk -w 0 nvme0 # same via flag
 Uses sysfs, `/proc/self/mountinfo`, `lsblk`, and optionally `smartctl`.
 
 - **SMART** requires `smartctl` (smartmontools). Use `--sudo` if permission is denied. It only runs against hardware-backed disks (not loop, dm, md, zram, nbd). The column is hidden when no disk reports SMART; use `-o` or `--show_empty_columns` to show it and `--debug` to see why it is empty.
+- **squashfs on loop devices** (snap packages, AppImages) is hidden by default: these images are read-only and always 100% full. Use `--show_squashfs` to list them. Other loop devices, such as a mounted disk image, are always shown.
 - **autofs** trigger mounts are ignored (stat-ing them would trigger the automount); the real filesystem appears once mounted.
 - **READ / WRITE** throughput comes from `/sys/class/block/*/stat` (always 512-byte sector units).
 - On a single-shot run (and the first row of watch mode), READ/WRITE are a lifetime busy-time average (bytes / time spent in I/O since boot). In watch mode, later refreshes are interval rates over the sleep period (Δbytes / wall clock).

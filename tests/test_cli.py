@@ -255,3 +255,15 @@ def test_json_keeps_empty_columns(monkeypatch, capsys, flag):
     statblk.main()
     data = json.loads(capsys.readouterr().out)
     assert "LABEL" in data[0]  # header row for -j, first object's keys for -J
+
+
+@pytest.mark.parametrize("argv, expected", [
+    (["statblk"], False),
+    (["statblk", "--show_squashfs"], True),
+])
+def test_show_squashfs_flag_passed_through(monkeypatch, argv, expected):
+    seen = {}
+    _patch_main_basics(monkeypatch, lambda **k: seen.update(k) or [["NAME"]])
+    monkeypatch.setattr(statblk.sys, "argv", argv)
+    statblk.main()
+    assert seen["show_squashfs"] is expected

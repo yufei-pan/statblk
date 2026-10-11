@@ -498,3 +498,45 @@ def test_devname_filter_matches_mapper_name(tmp_path, monkeypatch):
         output="NAME", filter_patterns=["root"], match_devname_only=True, timeout=2
     )
     assert [r[0] for r in rows[1:]] == ["pve-root"]
+
+
+def _squashfs_mounts():
+    return defaultdict(
+        list,
+        {
+            "/dev/loop0": [statblk.MountEntry("/snap/core22/2437", "squashfs", ["ro"])],
+            "/dev/loop1": [statblk.MountEntry("/mnt/image", "ext4", ["rw"])],
+            "/dev/sdb1": [statblk.MountEntry("/mnt/live", "squashfs", ["ro"])],
+        },
+    )
+
+
+def test_squashfs_loop_mounts_hidden_by_default(monkeypatch):
+    devices = ["/dev/loop0", "/dev/loop1", "/dev/sdb1"]
+    _patch_linux_basics(monkeypatch, devices=devices, mounts=_squashfs_mounts())
+    _patch_multicmd(monkeypatch, FakeCmdResult([], 0))
+    hidden = statblk.get_drives_info(output="NAME,FSTYPE", timeout=2)
+    # Only the snap loop goes: a loop disk image and a non-loop squashfs stay.
+    assert hidden[1:] == [["loop1", "ext4"], ["sdb1", "squashfs"]]
+    shown = statblk.get_drives_info(output="NAME,FSTYPE", show_squashfs=True, timeout=2)
+    assert [r[0] for r in shown[1:]] == ["loop0", "loop1", "sdb1"]
+
+
+def test_squashfs_loop_hidden_regardless_of_output_columns(monkeypatch):
+    # Mounted FSTYPE comes from mountinfo, so hiding works without the FSTYPE column.
+    _patch_linux_basics(monkeypatch, devices=["/dev/loop0"], mounts=_squashfs_mounts())
+    _patch_multicmd(monkeypatch, FakeCmdResult([], 0))
+    rows = statblk.get_drives_info(output="NAME,MOUNTPOINT", timeout=2)
+    assert rows[1:] == []
+
+
+def test_unmounted_squashfs_loop_hidden_by_lsblk_fstype(monkeypatch):
+    _patch_linux_basics(monkeypatch, devices=["/dev/loop0", "/dev/loop1"], mounts=defaultdict(list))
+    _patch_multicmd(monkeypatch, FakeCmdResult([
+        'NAME="/dev/loop0" SIZE="1000" FSTYPE="squashfs" UUID="" LABEL=""',
+        'NAME="/dev/loop1" SIZE="1000" FSTYPE="ext4" UUID="" LABEL=""',
+    ], 0))
+    rows = statblk.get_drives_info(output="NAME,FSTYPE", timeout=2)
+    assert rows[1:] == [["loop1", "ext4"]]
+    shown = statblk.get_drives_info(output="NAME,FSTYPE", show_squashfs=True, timeout=2)
+    assert [r[0] for r in shown[1:]] == ["loop0", "loop1"]

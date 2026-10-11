@@ -154,7 +154,7 @@ def clear_caches():
 	for fn in _CACHED_FUNCTIONS:
 		fn.cache_clear()
 
-version = '1.45'
+version = '1.46'
 VERSION = version
 __version__ = version
 COMMIT_DATE = '2026-10-10'
@@ -623,6 +623,17 @@ def has_sysfs_device(disk):
 	"""
 	return os.path.exists(os.path.join('/sys/class/block', os.path.basename(disk), 'device'))
 
+def is_squashfs_loop(device_name, fstype):
+	"""True for a squashfs image on a loop device (snaps, AppImages): read-only
+	and always 100% full, so it is hidden unless --show_squashfs.
+
+	>>> is_squashfs_loop('/dev/loop0', 'squashfs')
+	True
+	>>> is_squashfs_loop('/dev/loop1', 'ext4'), is_squashfs_loop('/dev/sdb1', 'squashfs')
+	(False, False)
+	"""
+	return fstype == 'squashfs' and os.path.basename(device_name).startswith('loop')
+
 def is_partition(sysfs_block_path):
 	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
 		return False
@@ -766,7 +777,7 @@ def parse_smart_health(lines):
 ALL_OUTPUT_FIELDS = ["NAME", "FSTYPE", "SIZE", "FSUSE%", "MOUNTPOINT", "SMART", "LABEL", "UUID", "MODEL", "SERIAL", "DISCARD", "READ", "WRITE"]
 
 def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, best_only=False, 
-					formated_only=False, show_zero_size_devices=False,pseudo=False,tptDict=None,
+					formated_only=False, show_zero_size_devices=False,show_squashfs=False,pseudo=False,tptDict=None,
 					full=False,active_only=False,output="all",exclude="",
 					filter_patterns=None,invert_match=False,match_devname_only=False,timeout=None,
 					debug=False):
@@ -930,6 +941,8 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 				device_properties['FSTYPE'] = mount_entry.FSTYPE
 				if formated_only and not device_properties['FSTYPE']:
 					continue
+				if not show_squashfs and is_squashfs_loop(device_name, mount_entry.FSTYPE):
+					continue
 				device_properties['MOUNTPOINT'] = mount_entry.MOUNTPOINT
 				statvfs_wait = None if deadline is None else max(_remaining(deadline), STATVFS_MIN_WAIT)
 				usage = get_statvfs_use_size(device_properties['MOUNTPOINT'], timeout=statvfs_wait)
@@ -961,6 +974,9 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			if formated_only and device_name not in fstype_dict:
 				continue
 			device_properties['FSTYPE'] = fstype_dict.get(device_name, '')
+			# Best effort: fstype_dict is only filled when FSTYPE is an output column.
+			if not show_squashfs and is_squashfs_loop(device_name, device_properties['FSTYPE']):
+				continue
 			if IS_DARWIN:
 				size_bytes = size_dict.get(device_name, macos_info.get(device_name, {}).get('SIZE_BYTES', 0))
 			else:
@@ -1071,6 +1087,7 @@ def main():
 						help="Repeat output every SECONDS (watch mode). Equivalent to a trailing integer positional.")
 	parser.add_argument('--sudo', help="Run commands as root with sudo. Needed for querying SMART info.", action="store_true")
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")
+	parser.add_argument('--show_squashfs', help="Show squashfs images on loop devices (snaps, AppImages), hidden by default", action="store_true")
 	parser.add_argument('--show_empty_columns', help="Keep table columns that are empty for every row (hidden by default unless named in -o)", action="store_true")
 	parser.add_argument('-D','--match_devname_only', help="Change filter pattern to match just the device names instead of the full line", action="store_true")
 	parser.add_argument('-v','--invert_match', help="Invert the filter match", action="store_true")
@@ -1104,6 +1121,7 @@ def main():
 			results = get_drives_info(print_bytes = args.bytes or args.json_objects, use_1024 = not args.si, 
 								mounted_only=args.mounted_only, best_only=args.best_only, 
 								formated_only=args.formated_only, show_zero_size_devices=args.show_zero_size_devices,
+								show_squashfs=args.show_squashfs,
 								pseudo=args.pseudo,tptDict=tptDict,full=args.full,active_only=args.active_only,
 								output=args.output,exclude=args.exclude,
 								filter_patterns=args.filter_patterns,invert_match=args.invert_match,match_devname_only=args.match_devname_only,
