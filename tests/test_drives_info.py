@@ -562,3 +562,31 @@ def test_formated_only_runs_lsblk_without_lsblk_columns(monkeypatch):
     rows = statblk.get_drives_info(output="NAME,MOUNTPOINT", formated_only=True, timeout=2)
     assert any(cmd.startswith("lsblk") for cmd in commands)
     assert rows == [["NAME", "MOUNTPOINT"], ["sda1", ""]]
+
+
+def _hardware_and_virtual(tmp_path, monkeypatch):
+    make_sysfs_block(tmp_path, "sda", size_sectors=1)  # physical: has device/
+    make_sysfs_block(tmp_path, "loop0", size_sectors=1, with_device=False)
+    _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/loop0"], mounts=defaultdict(list))
+    monkeypatch.setattr(
+        statblk, "get_partition_parent_name", lambda p: {"/dev/sda1": "/dev/sda"}.get(p, p)
+    )
+    redirect_sys_class_block(tmp_path, monkeypatch)
+
+
+def test_missing_smartctl_marks_hardware_disks(tmp_path, monkeypatch):
+    _hardware_and_virtual(tmp_path, monkeypatch)
+    monkeypatch.setattr(statblk, "SMARTCTL_PATH", None)
+    _patch_multicmd(monkeypatch, FakeCmdResult([], 0))
+    rows = statblk.get_drives_info(output="NAME,SMART", timeout=2)
+    assert rows[1:] == [["loop0", ""], ["sda1", "NO SMARTCTL"]]
+
+
+def test_smart_without_verdict_is_unknown(tmp_path, monkeypatch):
+    _hardware_and_virtual(tmp_path, monkeypatch)
+    monkeypatch.setattr(statblk, "SMARTCTL_PATH", "/usr/sbin/smartctl")
+    _patch_multicmd(monkeypatch, FakeCmdResult(
+        ["/dev/sda: DELL or MegaRaid controller, please try adding '-d megaraid,N'"]
+    ))
+    rows = statblk.get_drives_info(output="NAME,SMART", timeout=2)
+    assert rows[1:] == [["loop0", ""], ["sda1", "UNKNOWN"]]

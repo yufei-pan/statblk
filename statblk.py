@@ -154,7 +154,7 @@ def clear_caches():
 	for fn in _CACHED_FUNCTIONS:
 		fn.cache_clear()
 
-version = '1.48'
+version = '1.49'
 VERSION = version
 __version__ = version
 COMMIT_DATE = '2026-10-10'
@@ -623,6 +623,12 @@ def has_sysfs_device(disk):
 	"""
 	return os.path.exists(os.path.join('/sys/class/block', os.path.basename(disk), 'device'))
 
+def has_smart(parent_name):
+	"""True if SMART should be readable for this disk: a hardware-backed disk
+	on Linux, any disk on macOS. A blank SMART value on such a disk would mean
+	"not checked", so it is shown as NO SMARTCTL / UNKNOWN instead."""
+	return bool(parent_name) and (IS_DARWIN or has_sysfs_device(parent_name))
+
 def is_squashfs_loop(device_name, fstype):
 	"""True for a squashfs image on a loop device (snaps, AppImages): read-only
 	and always 100% full, so it is hidden unless --show_squashfs.
@@ -828,7 +834,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	for block_device in block_devices:
 		if 'SMART' in output_fields_set and SMARTCTL_PATH:
 			parent_name = get_partition_parent_name(block_device)
-			if parent_name and (IS_DARWIN or has_sysfs_device(parent_name)):
+			if has_smart(parent_name):
 				if parent_name not in smart_infos:
 					smart_infos[parent_name] = multiCMD.run_command(f'{SMARTCTL_PATH} -H {parent_name}',timeout=timeout,quiet=True,wait_for_return=False,return_object=True)
 		if block_device not in tptDict:
@@ -913,8 +919,11 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 					if smart_info_obj.thread.is_alive():
 						smart_status[parent_name] = 'TIMEOUT'
 					else:
-						smart_status[parent_name] = parse_smart_health(smart_info_obj.stdout)
+						# smartctl answered but gave no verdict (RAID HBA, unsupported device).
+						smart_status[parent_name] = parse_smart_health(smart_info_obj.stdout) or 'UNKNOWN'
 				device_properties['SMART'] = smart_status[parent_name]
+			elif 'SMART' in output_fields_set and not SMARTCTL_PATH and has_smart(parent_name):
+				device_properties['SMART'] = 'NO SMARTCTL'
 		if device_name in tptDict:
 			try:
 				device_properties['READ'], device_properties['WRITE'] = next(tptDict[device_name])
@@ -1055,37 +1064,47 @@ def _parse_percent(value):
 	"""
 	return int(value[:-1]) if value.endswith('%') and value[:-1].isdigit() else None
 
-# Columns --check looks at, and the SMART values that don't count as a problem
-# (DENIED is a permissions issue, not disk health).
+# --check: the columns it looks at, SMART values that are fine ('' = virtual
+# device with no SMART), and SMART values that mean the disk wasn't checked.
 CHECK_FIELDS = ('FSUSE%', 'SMART')
-SMART_NOT_A_PROBLEM = ('', 'OK', 'DENIED')
+SMART_HEALTHY = ('', 'OK')
+SMART_UNKNOWN = ('NO SMARTCTL', 'UNKNOWN', 'DENIED')
+# --check exit status, Nagios-style: problems beat unknowns.
+CHECK_OK, CHECK_PROBLEM, CHECK_UNKNOWN = 0, 1, 3
 
-def find_problem_rows(rows, max_use):
-	"""Keep the header and the rows --check reports: SMART other than
-	OK/DENIED/empty (FAILED!, vendor failure text, a hung smartctl), FSUSE% at
-	or above max_use, or a mount that timed out. A check whose column is
-	missing (excluded with -x) is skipped.
+def check_rows(rows, max_use):
+	"""Return (rows to report, exit status) for --check.
 
-	>>> rows = [['NAME', 'FSUSE%', 'SMART'], ['sda1', '42%', 'OK'], ['sda2', '95%', 'OK'], ['sdb', '', 'FAILED!']]
-	>>> find_problem_rows(rows, 90)
-	[['NAME', 'FSUSE%', 'SMART'], ['sda2', '95%', 'OK'], ['sdb', '', 'FAILED!']]
+	A problem (status 1) is SMART that isn't healthy or unknown (FAILED!,
+	vendor failure text, a hung smartctl), FSUSE% at or above max_use, or a
+	mount that timed out. Otherwise SMART that couldn't be read (status 3)
+	is reported, since a blank result would hide that the disk wasn't checked.
+	A check whose column is missing (excluded with -x) is skipped.
+
+	>>> rows = [['NAME', 'FSUSE%', 'SMART'], ['sda1', '42%', 'OK'], ['sda2', '95%', 'OK'], ['sdb', '', 'UNKNOWN']]
+	>>> check_rows(rows, 90)
+	([['NAME', 'FSUSE%', 'SMART'], ['sda2', '95%', 'OK'], ['sdb', '', 'UNKNOWN']], 1)
+	>>> check_rows([rows[0], rows[1], rows[3]], 90)
+	([['NAME', 'FSUSE%', 'SMART'], ['sdb', '', 'UNKNOWN']], 3)
 	"""
 	if not rows:
-		return rows
+		return rows, CHECK_OK
 	header = rows[0]
 	use_i = header.index('FSUSE%') if 'FSUSE%' in header else None
 	smart_i = header.index('SMART') if 'SMART' in header else None
-	def is_problem(row):
-		if smart_i is not None and row[smart_i] not in SMART_NOT_A_PROBLEM:
-			return True
+	def row_status(row):
 		if use_i is not None:
-			if row[use_i] == 'TIMEOUT':
-				return True
 			pct = _parse_percent(row[use_i])
-			if pct is not None and pct >= max_use:
-				return True
-		return False
-	return [header] + [row for row in rows[1:] if is_problem(row)]
+			if row[use_i] == 'TIMEOUT' or (pct is not None and pct >= max_use):
+				return CHECK_PROBLEM
+		if smart_i is not None and row[smart_i] not in SMART_HEALTHY:
+			return CHECK_UNKNOWN if row[smart_i] in SMART_UNKNOWN else CHECK_PROBLEM
+		return CHECK_OK
+	statuses = [row_status(row) for row in rows[1:]]
+	reported = [header] + [row for row, st in zip(rows[1:], statuses) if st != CHECK_OK]
+	if CHECK_PROBLEM in statuses:
+		return reported, CHECK_PROBLEM
+	return reported, CHECK_UNKNOWN if CHECK_UNKNOWN in statuses else CHECK_OK
 
 def rows_to_objects(rows):
 	"""Turn get_drives_info(print_bytes=True) rows into one dict per row, with
@@ -1127,7 +1146,7 @@ def main():
 	parser.add_argument('-t','--timeout', help="Set command timeout in seconds (default: 2)", default=2, type=int)
 	parser.add_argument('-w','--watch', metavar='SECONDS', type=int, default=None,
 						help="Repeat output every SECONDS (watch mode). Equivalent to a trailing integer positional.")
-	parser.add_argument('--check', help="Health check: print only rows with a problem (SMART not OK, FSUSE%% >= --max_use, hung mount) and exit 1 if any, else print nothing and exit 0", action="store_true")
+	parser.add_argument('--check', help="Health check: print rows with a problem (SMART failing, FSUSE%% >= --max_use, hung mount; exit 1) or unreadable SMART (exit 3), else print nothing and exit 0", action="store_true")
 	parser.add_argument('--max_use', metavar='PCT', type=int, default=90, help="FSUSE%% at or above which --check reports a filesystem (default: 90)")
 	parser.add_argument('--sudo', help="Run commands as root with sudo. Needed for querying SMART info.", action="store_true")
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")
@@ -1167,7 +1186,7 @@ def main():
 			named = {x.strip().upper() for x in (args.output + ',' + args.exclude).split(',')}
 			args.output += ''.join(',' + field for field in CHECK_FIELDS if field not in named)
 	multiCMD.set_sudo(args.sudo)
-	found_problems = False
+	check_status = CHECK_OK
 	try:
 		while True:
 			results = get_drives_info(print_bytes = args.bytes or args.json_objects, use_1024 = not args.si, 
@@ -1180,15 +1199,14 @@ def main():
 								timeout=args.timeout,debug=args.debug,
 								)
 			if args.check:
-				results = find_problem_rows(results, args.max_use)
-				found_problems = len(results) > 1
+				results, check_status = check_rows(results, args.max_use)
 			if args.json_objects:
 				import json
 				print(json.dumps(rows_to_objects(results), indent=1),flush=True)
 			elif args.json:
 				import json
 				print(json.dumps(results, indent=1),flush=True)
-			elif not args.check or found_problems:
+			elif not args.check or check_status != CHECK_OK:
 				# Hide all-empty columns only for the default column set: an explicit
 				# -o asked for them, and JSON keeps a stable schema for scripts.
 				if args.output == "all" and not args.show_empty_columns:
@@ -1214,7 +1232,7 @@ def main():
 			pass
 		return 1
 	# --check: silent exit 0 when healthy, so cron only mails on problems.
-	return 1 if found_problems else None
+	return check_status or None
 
 
 if __name__ == "__main__":

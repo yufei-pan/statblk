@@ -48,7 +48,7 @@ By default every column that has data is shown (a column that is empty for every
 | `SIZE` | Device or filesystem size |
 | `FSUSE%` | Filesystem space used (mounted entries); `TIMEOUT` for a mount that didn't answer (e.g. dead NFS server) |
 | `MOUNTPOINT` | Mount path |
-| `SMART` | SMART health (`OK`, `DENIED`, `TIMEOUT`, etc.) |
+| `SMART` | SMART health: `OK`, a failure such as `FAILED!`, `TIMEOUT` (smartctl stuck), or why it couldn't be read (`NO SMARTCTL`, `DENIED`, `UNKNOWN`). Blank for devices without SMART (loop, dm, md, zram, nbd) |
 | `LABEL` | Volume label |
 | `UUID` | Filesystem UUID |
 | `MODEL` | Drive model (from udev via `lsblk`, sysfs fallback) |
@@ -123,12 +123,15 @@ statblk -w 0 nvme0 # same via flag
 
 ### Health check
 
-`--check` runs once, prints only the rows with a problem and exits `1`; when everything is healthy it prints nothing and exits `0`, so cron only mails on trouble. A row is a problem when:
+`--check` runs once and prints only the rows that need attention; when everything is healthy it prints nothing, so cron only mails on trouble. Exit status:
 
-- `FSUSE%` is at or above `--max_use` (default 90), or is `TIMEOUT` (hung mount);
-- `SMART` is anything other than `OK`, empty, or `DENIED` — e.g. `FAILED!`, a vendor failure string, or `TIMEOUT` (smartctl stuck on the disk).
+| Exit | Meaning |
+|------|---------|
+| `0` | Healthy (nothing printed) |
+| `1` | Problem: `FSUSE%` at or above `--max_use` (default 90) or `TIMEOUT` (hung mount), or `SMART` reporting a failure — `FAILED!`, a vendor failure string, or `TIMEOUT` (smartctl stuck on the disk) |
+| `3` | Unknown: no problem found, but SMART couldn't be read on a disk — `NO SMARTCTL` (install smartmontools), `DENIED` (run as root or with `--sudo`) or `UNKNOWN` (no verdict, e.g. a disk behind a RAID controller) |
 
-`DENIED` is a permissions problem, not disk health, so it is not reported: run as root or with `--sudo` to include SMART in the check. `FSUSE%` and `SMART` are always added to the shown columns so you can see why a row failed; excluding one with `-x` turns that check off. Filters (`-M`, `-B`, patterns) and JSON output (`-j` / `-J`) work as usual. `--check` can't be combined with watch mode.
+A problem beats an unknown, and both kinds of rows are listed. Exit `3` exists so that "not checked" never looks like "healthy" in a sweep. For a space-only check use `-x SMART`; to skip a device that has no SMART at all (an SD card, a USB stick) filter it out, e.g. `statblk --check -D -v mmcblk`. `FSUSE%` and `SMART` are always added to the shown columns so you can see why a row failed; excluding one with `-x` turns that check off. Filters (`-M`, `-B`, patterns) and JSON output (`-j` / `-J`) work as usual. `--check` can't be combined with watch mode.
 
 ```bash
 statblk --check || mail -s "disk alert on $(hostname)" ops@example.com   # cron
@@ -142,7 +145,7 @@ mssh 'nodes[1-64]' 'statblk --check -M'                                  # whole
 
 Uses sysfs, `/proc/self/mountinfo`, `lsblk`, and optionally `smartctl`.
 
-- **SMART** requires `smartctl` (smartmontools). Use `--sudo` if permission is denied. It only runs against hardware-backed disks (not loop, dm, md, zram, nbd). The column is hidden when no disk reports SMART; use `-o` or `--show_empty_columns` to show it and `--debug` to see why it is empty.
+- **SMART** requires `smartctl` (smartmontools). Use `--sudo` if permission is denied. It only runs against hardware-backed disks (not loop, dm, md, zram, nbd). On a hardware disk where SMART can't be read the column says why (`NO SMARTCTL`, `DENIED`, `UNKNOWN`); it is blank for virtual devices.
 - **squashfs on loop devices** (snap packages, AppImages) is hidden by default: these images are read-only and always 100% full. Use `--show_squashfs` to list them. Other loop devices, such as a mounted disk image, are always shown.
 - **autofs** trigger mounts are ignored (stat-ing them would trigger the automount); the real filesystem appears once mounted.
 - **READ / WRITE** throughput comes from `/sys/class/block/*/stat` (always 512-byte sector units).

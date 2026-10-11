@@ -10,7 +10,7 @@ HEADER = ["NAME", "FSUSE%", "SMART"]
 @pytest.mark.parametrize("use, flagged", [("89%", False), ("90%", True), ("91%", True)])
 def test_fsuse_threshold_boundary(use, flagged):
     rows = [HEADER, ["sda1", use, "OK"]]
-    assert (statblk.find_problem_rows(rows, 90) == rows) is flagged
+    assert statblk.check_rows(rows, 90) == ((rows, 1) if flagged else ([HEADER], 0))
 
 
 @pytest.mark.parametrize("row", [
@@ -20,32 +20,48 @@ def test_fsuse_threshold_boundary(use, flagged):
     ["sdd", "", "HARDWARE IMPENDING FAILURE GENERAL HARD DRIVE FAILURE"],
 ])
 def test_problem_values_flagged(row):
-    assert statblk.find_problem_rows([HEADER, row], 90) == [HEADER, row]
+    assert statblk.check_rows([HEADER, row], 90) == ([HEADER, row], 1)
 
 
 @pytest.mark.parametrize("row", [
-    ["sda", "", ""],
+    ["loop0", "", ""],  # virtual device: no SMART to read
     ["sda1", "N/A", "OK"],
-    ["sda2", "10%", "DENIED"],  # permissions, not disk health
+    ["sda2", "10%", "OK"],
 ])
 def test_healthy_values_ignored(row):
-    assert statblk.find_problem_rows([HEADER, row], 90) == [HEADER]
+    assert statblk.check_rows([HEADER, row], 90) == ([HEADER], 0)
+
+
+@pytest.mark.parametrize("smart", ["NO SMARTCTL", "UNKNOWN", "DENIED"])
+def test_unreadable_smart_is_unknown(smart):
+    row = ["sda", "10%", smart]
+    assert statblk.check_rows([HEADER, row], 90) == ([HEADER, row], 3)
+
+
+def test_problem_beats_unknown_and_both_reported():
+    rows = [HEADER, ["sda1", "95%", "OK"], ["sdb", "", "UNKNOWN"], ["sdc", "10%", "OK"]]
+    assert statblk.check_rows(rows, 90) == ([HEADER, rows[1], rows[2]], 1)
+
+
+def test_unknown_row_over_threshold_is_a_problem():
+    row = ["sda1", "95%", "DENIED"]
+    assert statblk.check_rows([HEADER, row], 90) == ([HEADER, row], 1)
 
 
 def test_only_problem_rows_kept_in_order():
     rows = [HEADER, ["sda1", "95%", "OK"], ["sda2", "10%", "OK"], ["sdb", "", "FAILED!"]]
-    assert statblk.find_problem_rows(rows, 90) == [HEADER, rows[1], rows[3]]
+    assert statblk.check_rows(rows, 90) == ([HEADER, rows[1], rows[3]], 1)
 
 
 def test_missing_column_skips_that_check():
     # -x SMART / -x FSUSE% drop the column, which turns that check off.
-    assert statblk.find_problem_rows([["NAME", "FSUSE%"], ["sda1", "95%"]], 90) == [["NAME", "FSUSE%"], ["sda1", "95%"]]
-    assert statblk.find_problem_rows([["NAME", "SMART"], ["sda", "FAILED!"]], 90) == [["NAME", "SMART"], ["sda", "FAILED!"]]
-    assert statblk.find_problem_rows([["NAME", "MOUNTPOINT"], ["sda1", "/"]], 90) == [["NAME", "MOUNTPOINT"]]
+    assert statblk.check_rows([["NAME", "FSUSE%"], ["sda1", "95%"]], 90) == ([["NAME", "FSUSE%"], ["sda1", "95%"]], 1)
+    assert statblk.check_rows([["NAME", "SMART"], ["sda", "FAILED!"]], 90) == ([["NAME", "SMART"], ["sda", "FAILED!"]], 1)
+    assert statblk.check_rows([["NAME", "MOUNTPOINT"], ["sda1", "/"]], 90) == ([["NAME", "MOUNTPOINT"]], 0)
 
 
 def test_empty_rows_unchanged():
-    assert statblk.find_problem_rows([], 90) == []
+    assert statblk.check_rows([], 90) == ([], 0)
 
 
 CHECK_ROWS = [
@@ -115,3 +131,30 @@ def test_check_rejects_watch(monkeypatch, capsys, argv):
         _run_main(monkeypatch, argv)
     assert exc.value.code == 2
     assert "--check runs once" in capsys.readouterr().err
+
+
+UNKNOWN_ROWS = [
+    ["NAME", "FSUSE%", "SMART", "MOUNTPOINT"],
+    ["sda1", "10%", "NO SMARTCTL", "/data"],
+    ["loop1", "10%", "", "/mnt/image"],
+]
+
+
+def test_check_unknown_exits_3_and_lists_rows(monkeypatch):
+    code, _, tables = _run_main(monkeypatch, ["statblk", "--check"], rows=UNKNOWN_ROWS)
+    assert code == 3
+    assert tables == [[UNKNOWN_ROWS[0], UNKNOWN_ROWS[1]]]
+
+
+def test_check_unknown_json_objects(monkeypatch, capsys):
+    code, _, _ = _run_main(monkeypatch, ["statblk", "--check", "-J"], rows=UNKNOWN_ROWS)
+    assert code == 3
+    assert [(o["NAME"], o["SMART"]) for o in json.loads(capsys.readouterr().out)] == [("sda1", "NO SMARTCTL")]
+
+
+def test_check_exclude_smart_is_space_only(monkeypatch):
+    # get_drives_info drops the excluded column, so no row can be "unknown".
+    rows = [["NAME", "FSUSE%"], ["sda1", "10%"]]
+    code, seen, tables = _run_main(monkeypatch, ["statblk", "--check", "-x", "SMART"], rows=rows)
+    assert seen["exclude"] == "SMART" and seen["output"] == "all"
+    assert not code and tables == []
