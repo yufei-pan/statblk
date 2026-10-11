@@ -14,6 +14,7 @@ import functools
 import os
 import re
 import shutil
+import socket
 import stat
 import sys
 import threading
@@ -154,7 +155,7 @@ def clear_caches():
 	for fn in _CACHED_FUNCTIONS:
 		fn.cache_clear()
 
-version = '1.50'
+version = '1.51'
 VERSION = version
 __version__ = version
 COMMIT_DATE = '2026-10-10'
@@ -1152,8 +1153,8 @@ def main():
 	parser.add_argument('-P','--pseudo', help="Include pseudo file systems as well (tmpfs / nfs / cifs etc.)", action="store_true")
 	parser.add_argument('-o','--output', help="Specify which output columns to print.Use comma to separate columns. default: all available", default="all", type=str)
 	parser.add_argument('-x','--exclude', help="Specify which output columns to exclude.Use comma to separate columns. default: none", default="", type=str)
-	parser.add_argument('-t','--timeout', help="Set command timeout in seconds (default: 2)", default=2, type=int)
-	parser.add_argument('-w','--watch', metavar='SECONDS', type=int, default=None,
+	parser.add_argument('-t','--timeout', help="Set command timeout in seconds (default: 2)", default=2, type=float)
+	parser.add_argument('-w','--watch', metavar='SECONDS', type=float, default=None,
 						help="Repeat output every SECONDS (watch mode). Equivalent to a trailing integer positional.")
 	parser.add_argument('--check', help="Health check: print rows with a problem (SMART failing, FSUSE%% >= --max_use, hung mount; exit 1) or unreadable SMART (exit 3), else print nothing and exit 0", action="store_true")
 	parser.add_argument('--max_use', metavar='PCT', type=int, default=90, help="FSUSE%% at or above which --check reports a filesystem (default: 90)")
@@ -1211,10 +1212,11 @@ def main():
 				results, check_status = check_rows(results, args.max_use)
 			if args.json_objects:
 				import json
-				print(json.dumps(rows_to_objects(results), indent=1),flush=True)
+				# Watch mode streams NDJSON: one compact document per refresh.
+				print(json.dumps(rows_to_objects(results), indent=None if print_period > 0 else 1),flush=True)
 			elif args.json:
 				import json
-				print(json.dumps(results, indent=1),flush=True)
+				print(json.dumps(results, indent=None if print_period > 0 else 1),flush=True)
 			elif not args.check or check_status != CHECK_OK:
 				# Hide all-empty columns only for the default column set: an explicit
 				# -o asked for them, and JSON keeps a stable schema for scripts.
@@ -1222,12 +1224,20 @@ def main():
 					results = drop_empty_columns(results)
 				# JSON output is already escaped by json.dumps; the table is not.
 				safe_rows = [[printable(str(value)) for value in row] for row in results]
-				print(multiCMD.pretty_format_table(safe_rows,full=args.full),flush=True)
+				table = multiCMD.pretty_format_table(safe_rows,full=args.full)
+				if print_period > 0:
+					header = f"Every {print_period:g}s on {socket.gethostname()}: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+					# A terminal is redrawn in place (one write, so no flicker); piped
+					# output keeps every refresh, with the header as the boundary.
+					clear = '\033[H\033[J' if sys.stdout.isatty() else ''
+					table = f"{clear}{header}\n{table}"
+				print(table,flush=True)
 			if print_period <= 0:
 				break
 			time.sleep(print_period)
 			# Throughput is always 0 on macOS, so active_only would hide every row.
-			if not IS_DARWIN:
+			# Devices named by filter patterns stay on screen even while idle.
+			if not IS_DARWIN and not args.filter_patterns:
 				args.active_only = True
 	except KeyboardInterrupt:
 		return 130

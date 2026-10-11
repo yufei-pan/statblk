@@ -90,11 +90,15 @@ def _sleep_once_then_interrupt():
     return sleep
 
 
-@pytest.mark.parametrize("darwin, expected", [
-    (False, [False, True]),  # Linux: auto-enable after first refresh
-    (True, [False, False]),  # macOS: no throughput data, so never auto-enable
+@pytest.mark.parametrize("darwin, argv, expected", [
+    (False, ["statblk", "-w", "1"], [False, True]),  # Linux: auto-enable after first refresh
+    (False, ["statblk", "1"], [False, True]),  # trailing interval is not a pattern
+    (True, ["statblk", "-w", "1"], [False, False]),  # macOS: no throughput data, so never auto-enable
+    (False, ["statblk", "-w", "1", "sda"], [False, False]),  # named devices stay on screen
+    (False, ["statblk", "sda", "1"], [False, False]),
+    (False, ["statblk", "-w", "1", "-A", "sda"], [True, True]),  # explicit -A still applies
 ])
-def test_watch_auto_active_only(monkeypatch, darwin, expected):
+def test_watch_auto_active_only(monkeypatch, darwin, argv, expected):
     seen = []
 
     def fake_gdi(**kwargs):
@@ -106,7 +110,7 @@ def test_watch_auto_active_only(monkeypatch, darwin, expected):
     monkeypatch.setattr(statblk.multiCMD, "set_sudo", lambda x: None)
     monkeypatch.setattr(statblk.multiCMD, "pretty_format_table", lambda r, **k: "T")
     monkeypatch.setattr(statblk.time, "sleep", _sleep_once_then_interrupt())
-    monkeypatch.setattr(statblk.sys, "argv", ["statblk", "-w", "1"])
+    monkeypatch.setattr(statblk.sys, "argv", argv)
     statblk.main()
     assert seen == expected
 

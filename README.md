@@ -93,8 +93,8 @@ Use `-o` / `--output` to select columns (comma-separated) or `-x` / `--exclude` 
 
 | Flag | Description |
 |------|-------------|
-| `-t`, `--timeout` | Time budget per refresh in seconds for `lsblk`, `smartctl` and `statvfs` (default: 2) |
-| `-w`, `--watch SECONDS` | Repeat output every SECONDS (watch mode) |
+| `-t`, `--timeout` | Time budget per refresh in seconds for `lsblk`, `smartctl` and `statvfs` (default: 2; fractions allowed) |
+| `-w`, `--watch SECONDS` | Repeat output every SECONDS (watch mode; fractions allowed, e.g. `0.5`) |
 | `--check` | Health check: print only problem rows and exit 1, or print nothing and exit 0 (see [Health check](#health-check)) |
 | `--max_use PCT` | FSUSE% at or above which `--check` reports a filesystem (default: 90) |
 | `--sudo` | Run external commands via `sudo` (needed for SMART on many systems). `smartctl` is also looked up in `/usr/sbin`, `/sbin`, `/usr/local/sbin` when it isn't on `PATH` |
@@ -103,16 +103,19 @@ Use `-o` / `--output` to select columns (comma-separated) or `-x` / `--exclude` 
 
 ### Watch mode
 
-Prefer `-w` / `--watch`. A trailing integer positional still works the same as before:
+Prefer `-w` / `--watch`, which also takes fractions. A trailing integer positional still works the same as before (whole seconds only, so a pattern like `0.5` stays a filter):
 
 ```bash
 statblk -w 5       # update every 5 seconds
+statblk -w 0.5     # twice a second
 statblk 5          # same (trailing integer)
 statblk sda 3      # filter to sda, refresh every 3 seconds
 statblk -w 3 sda   # same with explicit flag (flag wins if both are given)
 ```
 
-After the first refresh, `--active_only` is enabled automatically on Linux so only busy devices are shown (not on macOS, where throughput isn't available). Each refresh re-reads mounts, labels, UUIDs, sizes, and per-drive sysfs info such as model/serial, so hot-swapped drives show up correctly (throughput iterators stay live across refreshes). Press Ctrl-C to stop (exit status 130).
+Each table refresh starts with a `watch(1)`-style header, `Every 2s on <hostname>: <date time>`. On a terminal the screen is redrawn in place; when output is piped or redirected every refresh is kept, so the log reads top to bottom. With `-j` / `-J`, watch mode prints one compact JSON document per line (NDJSON) so a reader can parse each refresh as it arrives; single-run JSON stays indented.
+
+After the first refresh, `--active_only` is enabled automatically on Linux so only busy devices are shown, unless you gave filter patterns: devices you named stay on screen even while idle (not on macOS, where throughput isn't available; `-A` still forces it). Each refresh re-reads mounts, labels, UUIDs, sizes, and per-drive sysfs info such as model/serial, so hot-swapped drives show up correctly (throughput iterators stay live across refreshes). Press Ctrl-C to stop (exit status 130).
 
 If a filter pattern looks like a number, append `0` so it is not treated as the refresh interval (or use `-w` and keep the number as a filter):
 
