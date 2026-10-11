@@ -1244,7 +1244,8 @@ def rows_to_objects(rows):
 
 
 def main():
-	parser = argparse.ArgumentParser(description="Gather disk and partition info for block devices.")
+	parser = argparse.ArgumentParser(description="Gather disk and partition info for block devices.",
+		epilog="READ/WRITE: the first query shows each device's since-boot average (bytes / time spent on I/O, idle time left out), i.e. its typical work pattern, not a real-time rate; later watch refreshes show live rates.")
 	parser.add_argument('-j','--json', help="Produce JSON output (list of rows, header first)", action="store_true")
 	parser.add_argument('-J','--json_objects', help="Produce JSON output as a list of objects with numeric SIZE/READ/WRITE (bytes) and FSUSE%% (percent)", action="store_true")
 	parser.add_argument('-b','--bytes', help="Print the SIZE column in bytes rather than in a human-readable format", action="store_true")
@@ -1252,7 +1253,7 @@ def main():
 	parser.add_argument('-F','-fo','--formated_only', help="Show only formated filesystems", action="store_true")
 	parser.add_argument('-M','-mo','--mounted_only', help="Show only mounted filesystems", action="store_true")
 	parser.add_argument('-B','-bo','--best_only', help="Show only shortest mount point for each device", action="store_true")
-	parser.add_argument('-A','-ao','--active_only', help="Show only active devices (positive read/write activity)", action="store_true")
+	parser.add_argument('-A','-ao','--active_only', help="Show only active devices (read/write activity since boot on the first query, during the last interval on later watch refreshes)", action="store_true")
 	parser.add_argument('-R','--full', help="Show full device information, do not collapse drive info when length > console length", action="store_true")
 	parser.add_argument('-P','--pseudo', help="Include pseudo file systems as well (tmpfs / nfs / cifs etc.)", action="store_true")
 	parser.add_argument('-o','--output', help="Specify which output columns to print.Use comma to separate columns. default: all available", default="all", type=str)
