@@ -206,3 +206,52 @@ def test_json_output_keeps_values_but_no_raw_control_characters(monkeypatch, cap
     out = capsys.readouterr().out
     assert "\x1b" not in out
     assert json.loads(out)[1] == HOSTILE_ROWS[1]
+
+
+SPARSE_ROWS = [
+    ["NAME", "SMART", "LABEL", "MOUNTPOINT"],
+    ["sda1", "OK", "", "/data"],
+    ["sda2", "OK", "", ""],
+]
+
+
+def _captured_table(monkeypatch, argv, rows=SPARSE_ROWS):
+    tables = []
+    _patch_main_basics(monkeypatch, lambda **k: [list(r) for r in rows])
+    monkeypatch.setattr(statblk.multiCMD, "pretty_format_table", lambda r, **k: tables.append(r) or "T")
+    monkeypatch.setattr(statblk.sys, "argv", argv)
+    statblk.main()
+    return tables[0]
+
+
+def test_table_hides_empty_columns_by_default(monkeypatch):
+    assert _captured_table(monkeypatch, ["statblk"]) == [
+        ["NAME", "SMART", "MOUNTPOINT"],
+        ["sda1", "OK", "/data"],
+        ["sda2", "OK", ""],
+    ]
+
+
+def test_table_hides_empty_columns_with_exclude(monkeypatch):
+    assert _captured_table(monkeypatch, ["statblk", "-x", "SMART"])[0] == ["NAME", "SMART", "MOUNTPOINT"]
+
+
+@pytest.mark.parametrize("argv", [
+    ["statblk", "--show_empty_columns"],
+    ["statblk", "-o", "NAME,SMART,LABEL,MOUNTPOINT"],  # explicitly asked for LABEL
+])
+def test_table_keeps_empty_columns_when_asked(monkeypatch, argv):
+    assert _captured_table(monkeypatch, argv) == SPARSE_ROWS
+
+
+def test_table_keeps_header_when_no_rows(monkeypatch):
+    assert _captured_table(monkeypatch, ["statblk"], rows=[SPARSE_ROWS[0]]) == [SPARSE_ROWS[0]]
+
+
+@pytest.mark.parametrize("flag", ["-j", "-J"])
+def test_json_keeps_empty_columns(monkeypatch, capsys, flag):
+    _patch_main_basics(monkeypatch, lambda **k: [list(r) for r in SPARSE_ROWS])
+    monkeypatch.setattr(statblk.sys, "argv", ["statblk", flag])
+    statblk.main()
+    data = json.loads(capsys.readouterr().out)
+    assert "LABEL" in data[0]  # header row for -j, first object's keys for -J

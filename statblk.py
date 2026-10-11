@@ -154,7 +154,7 @@ def clear_caches():
 	for fn in _CACHED_FUNCTIONS:
 		fn.cache_clear()
 
-version = '1.44'
+version = '1.45'
 VERSION = version
 __version__ = version
 COMMIT_DATE = '2026-10-10'
@@ -1014,6 +1014,21 @@ def printable(text):
 			escaped.append('\\U%08x' % code)
 	return ''.join(escaped)
 
+def drop_empty_columns(rows):
+	"""Remove columns whose value is empty in every data row (e.g. LABEL when
+	no filesystem is labelled, SMART without smartctl). A header-only table is
+	returned unchanged.
+
+	>>> drop_empty_columns([['NAME', 'LABEL', 'SMART'], ['sda1', '', 'OK'], ['sda2', '', '']])
+	[['NAME', 'SMART'], ['sda1', 'OK'], ['sda2', '']]
+	>>> drop_empty_columns([['NAME', 'LABEL']])
+	[['NAME', 'LABEL']]
+	"""
+	if len(rows) < 2:
+		return rows
+	keep = [i for i in range(len(rows[0])) if any(str(row[i]).strip() for row in rows[1:])]
+	return [[row[i] for i in keep] for row in rows]
+
 def rows_to_objects(rows):
 	"""Turn get_drives_info(print_bytes=True) rows into one dict per row, with
 	SIZE/READ/WRITE as integer bytes and FSUSE% as an integer percent (None
@@ -1056,6 +1071,7 @@ def main():
 						help="Repeat output every SECONDS (watch mode). Equivalent to a trailing integer positional.")
 	parser.add_argument('--sudo', help="Run commands as root with sudo. Needed for querying SMART info.", action="store_true")
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")
+	parser.add_argument('--show_empty_columns', help="Keep table columns that are empty for every row (hidden by default unless named in -o)", action="store_true")
 	parser.add_argument('-D','--match_devname_only', help="Change filter pattern to match just the device names instead of the full line", action="store_true")
 	parser.add_argument('-v','--invert_match', help="Invert the filter match", action="store_true")
 	parser.add_argument('--debug', help="Print suppressed exceptions to stderr for troubleshooting", action="store_true")
@@ -1100,6 +1116,10 @@ def main():
 				import json
 				print(json.dumps(results, indent=1),flush=True)
 			else:
+				# Hide all-empty columns only for the default column set: an explicit
+				# -o asked for them, and JSON keeps a stable schema for scripts.
+				if args.output == "all" and not args.show_empty_columns:
+					results = drop_empty_columns(results)
 				# JSON output is already escaped by json.dumps; the table is not.
 				safe_rows = [[printable(str(value)) for value in row] for row in results]
 				print(multiCMD.pretty_format_table(safe_rows,full=args.full),flush=True)
