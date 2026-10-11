@@ -52,3 +52,21 @@ def test_build_symlink_dict_decodes_udev_escapes(tmp_path):
     mapping = statblk.build_symlink_dict(str(by_label))
     assert mapping == {str(target): "my label"}
 
+
+
+@pytest.mark.parametrize("line", [
+    "Device is in STANDBY mode, exit(2)",
+    "Device is in SLEEP mode, exit(2)",
+    "Device is in STANDBY_Y mode, exit(2)",
+])
+def test_parse_smart_health_standby(line):
+    # smartctl -n standby skips a spun-down drive instead of waking it.
+    assert statblk.parse_smart_health(["smartctl 7.5 2025-04-30 r5714", line]) == "STANDBY"
+
+
+def test_parse_smart_health_idle_is_not_standby():
+    # IDLE drives are still spinning and get checked normally.
+    assert statblk.parse_smart_health([
+        "Device is in IDLE mode",
+        "SMART overall-health self-assessment test result: PASSED",
+    ]) == "OK"

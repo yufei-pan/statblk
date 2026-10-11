@@ -27,6 +27,7 @@ def test_problem_values_flagged(row):
     ["loop0", "", ""],  # virtual device: no SMART to read
     ["sda1", "N/A", "OK"],
     ["sda2", "10%", "OK"],
+    ["sdaa1", "6%", "STANDBY"],  # spun down: not woken, not a problem
 ])
 def test_healthy_values_ignored(row):
     assert statblk.check_rows([HEADER, row], 90) == ([HEADER], 0)
@@ -45,6 +46,11 @@ def test_problem_beats_unknown_and_both_reported():
 
 def test_unknown_row_over_threshold_is_a_problem():
     row = ["sda1", "95%", "DENIED"]
+    assert statblk.check_rows([HEADER, row], 90) == ([HEADER, row], 1)
+
+
+def test_standby_drive_still_space_checked():
+    row = ["sdaa1", "95%", "STANDBY"]
     assert statblk.check_rows([HEADER, row], 90) == ([HEADER, row], 1)
 
 

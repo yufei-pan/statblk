@@ -154,7 +154,7 @@ def clear_caches():
 	for fn in _CACHED_FUNCTIONS:
 		fn.cache_clear()
 
-version = '1.49'
+version = '1.50'
 VERSION = version
 __version__ = version
 COMMIT_DATE = '2026-10-10'
@@ -760,8 +760,12 @@ def _remaining(deadline):
 		return None
 	return max(0.0, deadline - time.monotonic())
 
+# What `smartctl -n standby` prints when it skips a spun-down drive (SLEEP,
+# STANDBY, or variants like STANDBY_Y) instead of waking it.
+SMART_STANDBY_RE = re.compile(r'device is in (sleep|standby)\w* mode')
+
 def parse_smart_health(lines):
-	"""Extract the health verdict from `smartctl -H` output.
+	"""Extract the health verdict from `smartctl -n standby -H` output.
 
 	>>> parse_smart_health(['SMART overall-health self-assessment test result: PASSED'])
 	'OK'
@@ -771,9 +775,13 @@ def parse_smart_health(lines):
 	'DENIED'
 	>>> parse_smart_health(['/dev/sda: Unable to detect device type'])
 	''
+	>>> parse_smart_health(['Device is in STANDBY mode, exit(2)'])
+	'STANDBY'
 	"""
 	for line in lines:
 		line = line.lower()
+		if SMART_STANDBY_RE.search(line):
+			return 'STANDBY'
 		if "health" in line:
 			return line.rpartition(':')[2].strip().upper().replace('PASSED', 'OK')
 		if "denied" in line:
@@ -836,7 +844,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			parent_name = get_partition_parent_name(block_device)
 			if has_smart(parent_name):
 				if parent_name not in smart_infos:
-					smart_infos[parent_name] = multiCMD.run_command(f'{SMARTCTL_PATH} -H {parent_name}',timeout=timeout,quiet=True,wait_for_return=False,return_object=True)
+					smart_infos[parent_name] = multiCMD.run_command(f'{SMARTCTL_PATH} -n standby -H {parent_name}',timeout=timeout,quiet=True,wait_for_return=False,return_object=True)
 		if block_device not in tptDict:
 			if IS_DARWIN:
 				tptDict[block_device] = get_read_write_rate_throughput_iter(block_device)
@@ -1065,9 +1073,10 @@ def _parse_percent(value):
 	return int(value[:-1]) if value.endswith('%') and value[:-1].isdigit() else None
 
 # --check: the columns it looks at, SMART values that are fine ('' = virtual
-# device with no SMART), and SMART values that mean the disk wasn't checked.
+# device with no SMART, STANDBY = spun down, checked when next awake), and
+# SMART values that mean the disk wasn't checked.
 CHECK_FIELDS = ('FSUSE%', 'SMART')
-SMART_HEALTHY = ('', 'OK')
+SMART_HEALTHY = ('', 'OK', 'STANDBY')
 SMART_UNKNOWN = ('NO SMARTCTL', 'UNKNOWN', 'DENIED')
 # --check exit status, Nagios-style: problems beat unknowns.
 CHECK_OK, CHECK_PROBLEM, CHECK_UNKNOWN = 0, 1, 3

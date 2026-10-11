@@ -48,7 +48,7 @@ By default every column that has data is shown (a column that is empty for every
 | `SIZE` | Device or filesystem size |
 | `FSUSE%` | Filesystem space used (mounted entries); `TIMEOUT` for a mount that didn't answer (e.g. dead NFS server) |
 | `MOUNTPOINT` | Mount path |
-| `SMART` | SMART health: `OK`, a failure such as `FAILED!`, `TIMEOUT` (smartctl stuck), or why it couldn't be read (`NO SMARTCTL`, `DENIED`, `UNKNOWN`). Blank for devices without SMART (loop, dm, md, zram, nbd) |
+| `SMART` | SMART health: `OK`, `STANDBY` (spun-down drive, not woken), a failure such as `FAILED!`, `TIMEOUT` (smartctl stuck), or why it couldn't be read (`NO SMARTCTL`, `DENIED`, `UNKNOWN`). Blank for devices without SMART (loop, dm, md, zram, nbd) |
 | `LABEL` | Volume label |
 | `UUID` | Filesystem UUID |
 | `MODEL` | Drive model (from udev via `lsblk`, sysfs fallback) |
@@ -127,7 +127,7 @@ statblk -w 0 nvme0 # same via flag
 
 | Exit | Meaning |
 |------|---------|
-| `0` | Healthy (nothing printed) |
+| `0` | Healthy (nothing printed). A `STANDBY` drive counts as healthy: it is checked on the next run that finds it awake |
 | `1` | Problem: `FSUSE%` at or above `--max_use` (default 90) or `TIMEOUT` (hung mount), or `SMART` reporting a failure — `FAILED!`, a vendor failure string, or `TIMEOUT` (smartctl stuck on the disk) |
 | `3` | Unknown: no problem found, but SMART couldn't be read on a disk — `NO SMARTCTL` (install smartmontools), `DENIED` (run as root or with `--sudo`) or `UNKNOWN` (no verdict, e.g. a disk behind a RAID controller) |
 
@@ -145,7 +145,7 @@ mssh 'nodes[1-64]' 'statblk --check -M'                                  # whole
 
 Uses sysfs, `/proc/self/mountinfo`, `lsblk`, and optionally `smartctl`.
 
-- **SMART** requires `smartctl` (smartmontools). Use `--sudo` if permission is denied. It only runs against hardware-backed disks (not loop, dm, md, zram, nbd). On a hardware disk where SMART can't be read the column says why (`NO SMARTCTL`, `DENIED`, `UNKNOWN`); it is blank for virtual devices.
+- **SMART** requires `smartctl` (smartmontools). Use `--sudo` if permission is denied. It only runs against hardware-backed disks (not loop, dm, md, zram, nbd). smartctl runs with `-n standby`, so spun-down drives are not woken (not even by watch mode); they show `STANDBY` until they're next awake. On a hardware disk where SMART can't be read the column says why (`NO SMARTCTL`, `DENIED`, `UNKNOWN`); it is blank for virtual devices.
 - **squashfs on loop devices** (snap packages, AppImages) is hidden by default: these images are read-only and always 100% full. Use `--show_squashfs` to list them. Other loop devices, such as a mounted disk image, are always shown.
 - **autofs** trigger mounts are ignored (stat-ing them would trigger the automount); the real filesystem appears once mounted.
 - **READ / WRITE** throughput comes from `/sys/class/block/*/stat` (always 512-byte sector units).

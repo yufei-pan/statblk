@@ -380,7 +380,7 @@ def test_smartctl_only_runs_on_disks_with_sysfs_device(tmp_path, monkeypatch):
         ["SMART overall-health self-assessment test result: PASSED"]
     ))
     rows = statblk.get_drives_info(output="NAME,SMART", timeout=2)
-    assert [c for c in commands if "smartctl" in c] == ["/usr/sbin/smartctl -H /dev/sda"]
+    assert [c for c in commands if "smartctl" in c] == ["/usr/sbin/smartctl -n standby -H /dev/sda"]
     assert rows[1:] == [["dm-0", ""], ["loop0", ""], ["sda1", "OK"]]
 
 
@@ -590,3 +590,11 @@ def test_smart_without_verdict_is_unknown(tmp_path, monkeypatch):
     ))
     rows = statblk.get_drives_info(output="NAME,SMART", timeout=2)
     assert rows[1:] == [["loop0", ""], ["sda1", "UNKNOWN"]]
+
+
+def test_sleeping_drive_shown_as_standby(tmp_path, monkeypatch):
+    _hardware_and_virtual(tmp_path, monkeypatch)
+    monkeypatch.setattr(statblk, "SMARTCTL_PATH", "/usr/sbin/smartctl")
+    _patch_multicmd(monkeypatch, FakeCmdResult(["Device is in STANDBY mode, exit(2)"], returncode=2))
+    rows = statblk.get_drives_info(output="NAME,SMART", timeout=2)
+    assert rows[1:] == [["loop0", ""], ["sda1", "STANDBY"]]
