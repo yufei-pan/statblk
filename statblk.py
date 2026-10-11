@@ -154,7 +154,7 @@ def clear_caches():
 	for fn in _CACHED_FUNCTIONS:
 		fn.cache_clear()
 
-version = '1.47'
+version = '1.48'
 VERSION = version
 __version__ = version
 COMMIT_DATE = '2026-10-10'
@@ -1047,6 +1047,46 @@ def drop_empty_columns(rows):
 	keep = [i for i in range(len(rows[0])) if any(str(row[i]).strip() for row in rows[1:])]
 	return [[row[i] for i in keep] for row in rows]
 
+def _parse_percent(value):
+	"""FSUSE% cell to an int percent, or None for '', N/A or TIMEOUT.
+
+	>>> _parse_percent('35%'), _parse_percent('N/A'), _parse_percent('TIMEOUT')
+	(35, None, None)
+	"""
+	return int(value[:-1]) if value.endswith('%') and value[:-1].isdigit() else None
+
+# Columns --check looks at, and the SMART values that don't count as a problem
+# (DENIED is a permissions issue, not disk health).
+CHECK_FIELDS = ('FSUSE%', 'SMART')
+SMART_NOT_A_PROBLEM = ('', 'OK', 'DENIED')
+
+def find_problem_rows(rows, max_use):
+	"""Keep the header and the rows --check reports: SMART other than
+	OK/DENIED/empty (FAILED!, vendor failure text, a hung smartctl), FSUSE% at
+	or above max_use, or a mount that timed out. A check whose column is
+	missing (excluded with -x) is skipped.
+
+	>>> rows = [['NAME', 'FSUSE%', 'SMART'], ['sda1', '42%', 'OK'], ['sda2', '95%', 'OK'], ['sdb', '', 'FAILED!']]
+	>>> find_problem_rows(rows, 90)
+	[['NAME', 'FSUSE%', 'SMART'], ['sda2', '95%', 'OK'], ['sdb', '', 'FAILED!']]
+	"""
+	if not rows:
+		return rows
+	header = rows[0]
+	use_i = header.index('FSUSE%') if 'FSUSE%' in header else None
+	smart_i = header.index('SMART') if 'SMART' in header else None
+	def is_problem(row):
+		if smart_i is not None and row[smart_i] not in SMART_NOT_A_PROBLEM:
+			return True
+		if use_i is not None:
+			if row[use_i] == 'TIMEOUT':
+				return True
+			pct = _parse_percent(row[use_i])
+			if pct is not None and pct >= max_use:
+				return True
+		return False
+	return [header] + [row for row in rows[1:] if is_problem(row)]
+
 def rows_to_objects(rows):
 	"""Turn get_drives_info(print_bytes=True) rows into one dict per row, with
 	SIZE/READ/WRITE as integer bytes and FSUSE% as an integer percent (None
@@ -1064,7 +1104,7 @@ def rows_to_objects(rows):
 			if field in ('SIZE', 'READ', 'WRITE'):
 				value = int(value) if value.isdigit() else None
 			elif field == 'FSUSE%':
-				value = int(value[:-1]) if value.endswith('%') and value[:-1].isdigit() else None
+				value = _parse_percent(value)
 			obj[field] = value
 		objects.append(obj)
 	return objects
@@ -1087,6 +1127,8 @@ def main():
 	parser.add_argument('-t','--timeout', help="Set command timeout in seconds (default: 2)", default=2, type=int)
 	parser.add_argument('-w','--watch', metavar='SECONDS', type=int, default=None,
 						help="Repeat output every SECONDS (watch mode). Equivalent to a trailing integer positional.")
+	parser.add_argument('--check', help="Health check: print only rows with a problem (SMART not OK, FSUSE%% >= --max_use, hung mount) and exit 1 if any, else print nothing and exit 0", action="store_true")
+	parser.add_argument('--max_use', metavar='PCT', type=int, default=90, help="FSUSE%% at or above which --check reports a filesystem (default: 90)")
 	parser.add_argument('--sudo', help="Run commands as root with sudo. Needed for querying SMART info.", action="store_true")
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")
 	parser.add_argument('--show_squashfs', help="Show squashfs images on loop devices (snaps, AppImages), hidden by default", action="store_true")
@@ -1117,7 +1159,15 @@ def main():
 				args.filter_patterns = args.filter_patterns[:-1]
 			except Exception:
 				pass
+	if args.check:
+		if print_period > 0:
+			parser.error("--check runs once and can't be combined with --watch or a trailing interval")
+		# Show why each row failed; -x SMART / -x FSUSE% turns that check off.
+		if args.output != "all":
+			named = {x.strip().upper() for x in (args.output + ',' + args.exclude).split(',')}
+			args.output += ''.join(',' + field for field in CHECK_FIELDS if field not in named)
 	multiCMD.set_sudo(args.sudo)
+	found_problems = False
 	try:
 		while True:
 			results = get_drives_info(print_bytes = args.bytes or args.json_objects, use_1024 = not args.si, 
@@ -1129,13 +1179,16 @@ def main():
 								filter_patterns=args.filter_patterns,invert_match=args.invert_match,match_devname_only=args.match_devname_only,
 								timeout=args.timeout,debug=args.debug,
 								)
+			if args.check:
+				results = find_problem_rows(results, args.max_use)
+				found_problems = len(results) > 1
 			if args.json_objects:
 				import json
 				print(json.dumps(rows_to_objects(results), indent=1),flush=True)
 			elif args.json:
 				import json
 				print(json.dumps(results, indent=1),flush=True)
-			else:
+			elif not args.check or found_problems:
 				# Hide all-empty columns only for the default column set: an explicit
 				# -o asked for them, and JSON keeps a stable schema for scripts.
 				if args.output == "all" and not args.show_empty_columns:
@@ -1160,6 +1213,8 @@ def main():
 		except (OSError, ValueError):
 			pass
 		return 1
+	# --check: silent exit 0 when healthy, so cron only mails on problems.
+	return 1 if found_problems else None
 
 
 if __name__ == "__main__":

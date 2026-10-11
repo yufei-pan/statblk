@@ -95,6 +95,8 @@ Use `-o` / `--output` to select columns (comma-separated) or `-x` / `--exclude` 
 |------|-------------|
 | `-t`, `--timeout` | Time budget per refresh in seconds for `lsblk`, `smartctl` and `statvfs` (default: 2) |
 | `-w`, `--watch SECONDS` | Repeat output every SECONDS (watch mode) |
+| `--check` | Health check: print only problem rows and exit 1, or print nothing and exit 0 (see [Health check](#health-check)) |
+| `--max_use PCT` | FSUSE% at or above which `--check` reports a filesystem (default: 90) |
 | `--sudo` | Run external commands via `sudo` (needed for SMART on many systems). `smartctl` is also looked up in `/usr/sbin`, `/sbin`, `/usr/local/sbin` when it isn't on `PATH` |
 | `--debug` | Print suppressed exceptions to stderr |
 | `-V`, `--version` | Show version and exit |
@@ -117,6 +119,21 @@ If a filter pattern looks like a number, append `0` so it is not treated as the 
 ```bash
 statblk nvme0 0    # match nvme0, single run (no watch)
 statblk -w 0 nvme0 # same via flag
+```
+
+### Health check
+
+`--check` runs once, prints only the rows with a problem and exits `1`; when everything is healthy it prints nothing and exits `0`, so cron only mails on trouble. A row is a problem when:
+
+- `FSUSE%` is at or above `--max_use` (default 90), or is `TIMEOUT` (hung mount);
+- `SMART` is anything other than `OK`, empty, or `DENIED` — e.g. `FAILED!`, a vendor failure string, or `TIMEOUT` (smartctl stuck on the disk).
+
+`DENIED` is a permissions problem, not disk health, so it is not reported: run as root or with `--sudo` to include SMART in the check. `FSUSE%` and `SMART` are always added to the shown columns so you can see why a row failed; excluding one with `-x` turns that check off. Filters (`-M`, `-B`, patterns) and JSON output (`-j` / `-J`) work as usual. `--check` can't be combined with watch mode.
+
+```bash
+statblk --check || mail -s "disk alert on $(hostname)" ops@example.com   # cron
+statblk --check -x SMART --max_use 80                                    # space only
+mssh 'nodes[1-64]' 'statblk --check -M'                                  # whole cluster via multiSSH3
 ```
 
 ## Platform notes
