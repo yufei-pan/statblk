@@ -134,12 +134,12 @@ statblk -w 0 nvme0 # same via flag
 | `1` | Problem: `FSUSE%` at or above `--max_use` (default 90) or `TIMEOUT` (hung mount), or `SMART` reporting a failure — `FAILED!`, a vendor failure string, or `TIMEOUT` (smartctl stuck on the disk) |
 | `3` | Unknown: no problem found, but SMART couldn't be read on a disk — `NO SMARTCTL` (install smartmontools), `DENIED` (run as root or with `--sudo`) or `UNKNOWN` (no verdict, e.g. a disk behind a RAID controller) |
 
-A problem beats an unknown, and both kinds of rows are listed. Exit `3` exists so that "not checked" never looks like "healthy" in a sweep. For a space-only check use `-x SMART`; to skip a device that has no SMART at all (an SD card, a USB stick) filter it out, e.g. `statblk --check -D -v mmcblk`. `FSUSE%` and `SMART` are always added to the shown columns so you can see why a row failed; excluding one with `-x` turns that check off. Filters (`-M`, `-B`, patterns) and JSON output (`-j` / `-J`) work as usual. `--check` can't be combined with watch mode.
+A problem beats an unknown, and both kinds of rows are listed. Exit `3` exists so that "not checked" never looks like "healthy" in a sweep. For a space-only check use `-x SMART`; to skip a device that has no SMART at all (an SD card, a USB stick) filter it out, e.g. `statblk --check -D -v mmcblk`. `FSUSE%` and `SMART` are always added to the shown columns so you can see why a row failed; excluding one with `-x` turns that check off. Filters (`-M`, `-B`, patterns) and JSON output (`-j` / `-J`) work as usual, but filters narrow what is checked: `-M` and patterns skip disks with no mount of their own (md/LVM/ZFS/Ceph members, extra btrfs pool devices), so cluster sweeps should run plain `--check`. `--check` can't be combined with watch mode.
 
 ```bash
 statblk --check || mail -s "disk alert on $(hostname)" ops@example.com   # cron
 statblk --check -x SMART --max_use 80                                    # space only
-mssh 'nodes[1-64]' 'statblk --check -M'                                  # whole cluster via multiSSH3
+mssh 'nodes[1-64]' 'statblk --check'                                     # whole cluster via multiSSH3
 ```
 
 ## Platform notes
