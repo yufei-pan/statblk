@@ -9,11 +9,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize("installed_version, uses_installed", [
-    ("1.53", True),
+    ("1.54", True),
     ("1.100", True),   # float('1.100') == 1.1 would wrongly reject it
     ("2.0", True),
-    ("1.52", False),   # older than the embedded copy
-    ("1.5", False),    # minor 5 < 53, though float('1.5') > 1.47
+    ("1.53", False),   # older than the embedded copy
+    ("1.5", False),    # minor 5 < 54, though float('1.5') > 1.47
     ("garbage", False),
     (None, False),     # module without a version attribute
 ])
@@ -30,7 +30,7 @@ def test_installed_multicmd_used_only_if_not_older_than_embedded(tmp_path, insta
     ).stdout.split()
     assert out[0] == str(uses_installed)
     if not uses_installed:
-        assert out[1] == "1.53"  # the embedded copy
+        assert out[1] == "1.54"  # the embedded copy
 
 
 def test_embedded_multicmd_table_lines_up_cjk_text(tmp_path):
@@ -43,3 +43,26 @@ def test_embedded_multicmd_table_lines_up_cjk_text(tmp_path):
         cwd=tmp_path, env=env, capture_output=True, check=True,
     ).stdout.decode("utf-8")
     assert out == "name | v\n-----+--\n中文 | 1\n"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="needs a pseudo-terminal")
+def test_embedded_multicmd_reads_terminal_columns_when_stdout_is_piped(tmp_path):
+    # `statblk | less` on a 200x40 terminal: the size comes from stdin's TIOCGWINSZ,
+    # whose winsize struct holds the rows before the columns.
+    import fcntl
+    import pty
+    import struct
+    import termios
+    (tmp_path / "multiCMD.py").write_text("version = '1.0'\n")  # too old: the embedded copy is used
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(tmp_path), str(ROOT)]))
+    master, slave = pty.openpty()
+    try:
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 200, 0, 0))
+        out = subprocess.run(
+            [sys.executable, "-c", "import statblk; print(*statblk.multiCMD.get_terminal_size()[:2])"],
+            stdin=slave, stdout=subprocess.PIPE, cwd=tmp_path, env=env, text=True, check=True,
+        ).stdout
+    finally:
+        os.close(slave)
+        os.close(master)
+    assert out.split() == ["200", "40"]
