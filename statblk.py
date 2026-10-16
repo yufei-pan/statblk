@@ -212,10 +212,10 @@ def clear_caches():
 	for fn in _CACHED_FUNCTIONS:
 		fn.cache_clear()
 
-version = '1.54'
+version = '1.55'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2026-10-11'
+COMMIT_DATE = '2026-10-16'
 
 # smartmontools installs into sbin, which non-root PATHs often omit (e.g. Debian),
 # yet `--sudo` exists exactly for non-root users who want SMART.
