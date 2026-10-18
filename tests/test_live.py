@@ -43,7 +43,7 @@ def test_live_strict_fsuse_root_matches_df():
 	root_rows = [r for r in rows[1:] if r[2] == "/"]
 	assert root_rows, "no row for mountpoint /"
 	statblk_pct = root_rows[0][1]
-	df_out = subprocess.check_output(["df", "-P", "/"], text=True).strip().splitlines()
+	df_out = subprocess.check_output(["df", "-P", "/"], universal_newlines=True).strip().splitlines()
 	# Filesystem 1024-blocks Used Available Capacity Mounted on
 	m = re.search(r"\s(\d+)%\s+/\s*$", df_out[-1])
 	assert m, df_out[-1]
@@ -58,6 +58,6 @@ def test_live_strict_names_subset_of_lsblk():
 	names = {r[0].replace("/dev/", "") for r in rows[1:]}
 	# -l: no tree glyphs; -a: include empty loops present in sysfs;
 	# KNAME + NAME: kernel names (dm-N) and mapper aliases (pve-root, shown for dm).
-	lsblk = subprocess.check_output(["lsblk", "-n", "-l", "-a", "-o", "KNAME,NAME"], text=True)
+	lsblk = subprocess.check_output(["lsblk", "-n", "-l", "-a", "-o", "KNAME,NAME"], universal_newlines=True)
 	lsblk_names = {name for line in lsblk.splitlines() for name in line.split()}
 	assert names <= lsblk_names

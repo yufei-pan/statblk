@@ -26,7 +26,7 @@ def test_installed_multicmd_used_only_if_not_older_than_embedded(tmp_path, insta
     out = subprocess.run(
         [sys.executable, "-c",
          "import statblk; print(getattr(statblk.multiCMD, 'INSTALLED', False), statblk.multiCMD.version)"],
-        cwd=tmp_path, env=env, capture_output=True, text=True, check=True,
+        cwd=tmp_path, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=True,
     ).stdout.split()
     assert out[0] == str(uses_installed)
     if not uses_installed:
@@ -40,7 +40,7 @@ def test_embedded_multicmd_table_lines_up_cjk_text(tmp_path):
     out = subprocess.run(
         [sys.executable, "-c",
          "import statblk; print(statblk.multiCMD.pretty_format_table([['name', 'v'], ['中文', '1']], full=True), end='')"],
-        cwd=tmp_path, env=env, capture_output=True, check=True,
+        cwd=tmp_path, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
     ).stdout.decode("utf-8")
     assert out == "name | v\n-----+--\n中文 | 1\n"
 
@@ -60,7 +60,7 @@ def test_embedded_multicmd_reads_terminal_columns_when_stdout_is_piped(tmp_path)
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 200, 0, 0))
         out = subprocess.run(
             [sys.executable, "-c", "import statblk; print(*statblk.multiCMD.get_terminal_size()[:2])"],
-            stdin=slave, stdout=subprocess.PIPE, cwd=tmp_path, env=env, text=True, check=True,
+            stdin=slave, stdout=subprocess.PIPE, cwd=tmp_path, env=env, universal_newlines=True, check=True,
         ).stdout
     finally:
         os.close(slave)
