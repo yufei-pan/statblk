@@ -17,7 +17,7 @@ setup(
         ],
     },
     install_requires=[
-        'multiCMD>=1.54',
+        'multiCMD>=1.55',
     ],
     extras_require={
         'completion': [
