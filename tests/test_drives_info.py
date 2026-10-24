@@ -598,3 +598,22 @@ def test_sleeping_drive_shown_as_standby(tmp_path, monkeypatch):
     _patch_multicmd(monkeypatch, FakeCmdResult(["Device is in STANDBY mode, exit(2)"], returncode=2))
     rows = statblk.get_drives_info(output="NAME,SMART", timeout=2)
     assert rows[1:] == [["loop0", ""], ["sda1", "STANDBY"]]
+
+
+def test_missing_lsblk_is_reported_on_stderr_and_table_still_prints(monkeypatch, capsys):
+    # multiCMD's quiet=True hides its own "Command path not found" line for return code 127.
+    _patch_linux_basics(monkeypatch, devices=["/dev/sda1"], mounts=defaultdict(list))
+    _patch_multicmd(monkeypatch, FakeCmdResult([], returncode=127))
+    rows = statblk.get_drives_info(output="NAME,SIZE,FSTYPE", timeout=2)
+    assert [r[0] for r in rows] == ["NAME", "sda1"]
+    err = capsys.readouterr().err
+    assert "lsblk not found" in err
+    assert "util-linux" in err
+    assert len(err.strip().splitlines()) == 1
+
+
+def test_failing_lsblk_other_than_missing_stays_quiet(monkeypatch, capsys):
+    _patch_linux_basics(monkeypatch, devices=["/dev/sda1"], mounts=defaultdict(list))
+    _patch_multicmd(monkeypatch, FakeCmdResult([], returncode=1))
+    statblk.get_drives_info(output="NAME,SIZE,FSTYPE", timeout=2)
+    assert "lsblk not found" not in capsys.readouterr().err

@@ -1071,6 +1071,9 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	serial_dict = {}
 	if (not IS_DARWIN) and LSBLK_FIELDS.intersection(collect_fields):
 		lsblk_result.thread.join(timeout)
+		# multiCMD's quiet=True hides its own "Command path not found" line.
+		if lsblk_result.returncode == 127:
+			print("lsblk not found (it comes with util-linux): FSTYPE, UUID, MODEL and SERIAL come from sysfs and /dev/disk instead and may be incomplete.", file=sys.stderr)
 		if lsblk_result.returncode == 0:
 			populate_lsblk_dicts(lsblk_result.stdout, collect_fields, uuid_dict, fstype_dict, label_dict, size_dict,
 								model_dict=model_dict, serial_dict=serial_dict)

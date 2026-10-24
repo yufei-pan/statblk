@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
     ("1.100", True),   # float('1.100') == 1.1 would wrongly reject it
     ("2.0", True),
     ("1.54", False),   # older than the embedded copy
-    ("1.5", False),    # minor 5 < 55, though float('1.5') > 1.47
+    ("1.9", False),    # minor 9 < 55, though float('1.9') > 1.55
     ("garbage", False),
     (None, False),     # module without a version attribute
 ])
