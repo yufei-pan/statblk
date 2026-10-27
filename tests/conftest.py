@@ -16,13 +16,6 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "live_strict: strict df/lsblk comparisons")
 
 
-@pytest.fixture(autouse=True)
-def _clear_statblk_caches():
-    statblk.clear_caches()
-    yield
-    statblk.clear_caches()
-
-
 def skip_unless_linux_block():
     if sys.platform != "linux":
         pytest.skip("Linux only")

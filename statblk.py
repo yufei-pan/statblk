@@ -10,7 +10,6 @@ Run embedded doctests::
     python -m doctest statblk.py -v
 """
 import argparse
-import functools
 import os
 import re
 import shutil
@@ -20,7 +19,6 @@ import sys
 import threading
 import time
 import traceback
-import typing
 from collections import defaultdict, namedtuple
 
 try:
@@ -214,42 +212,6 @@ CLljLKdn/G[02Y;;Zfb)uFOuhq=\qc$sEDpFlB-pB>e!O$27\5n9&2K)J(]Q2$L'Xa9E%ul"VMoUO?M8
 6,EDg)R;^Qe&2cNV!!2,2!U8&8s)4"iZ,C;P!WW3#!!HG.'''
 	exec(lzma.decompress(base64.a85decode(_SRC_B85)).decode("utf-8"), multiCMD.__dict__)
 
-# Every function wrapped by cache_decorator; clear_caches() empties them all so
-# each get_drives_info() refresh sees current sysfs / mount / diskutil state.
-_CACHED_FUNCTIONS = []
-
-def _make_hashable(item):
-	if isinstance(item, typing.Mapping):
-		# Sort items so that {'a':1, 'b':2} and {'b':2, 'a':1} hash the same
-		return tuple(
-			( _make_hashable(k), _make_hashable(v) )
-			for k, v in sorted(item.items(), key=lambda item: item[0])
-		)
-	if isinstance(item, (list, set, tuple)):
-		return tuple(_make_hashable(e) for e in item)
-	# Fallback: assume item is already hashable
-	return item
-
-def cache_decorator(user_function):
-	cached_func = functools.lru_cache(maxsize=None)(user_function)
-	@functools.wraps(user_function)
-	def wrapper(*args, **kwargs):
-		# Convert all args/kwargs to hashable equivalents
-		hashable_args = tuple(_make_hashable(a) for a in args)
-		hashable_kwargs = {
-			k: _make_hashable(v) for k, v in kwargs.items()
-		}
-		return cached_func(*hashable_args, **hashable_kwargs)
-	# Expose cache statistics and clear method
-	wrapper.cache_info = cached_func.cache_info
-	wrapper.cache_clear = cached_func.cache_clear
-	_CACHED_FUNCTIONS.append(wrapper)
-	return wrapper
-
-def clear_caches():
-	for fn in _CACHED_FUNCTIONS:
-		fn.cache_clear()
-
 version = '1.56'
 VERSION = version
 __version__ = version
@@ -433,7 +395,6 @@ def parse_bytes_from_diskutil_size(value):
 			return 0
 	return 0
 
-@cache_decorator
 def get_macos_diskutil_info(timeout=4):
 	"""
 	Build map: /dev/diskXsY -> info from `diskutil info -all`.
@@ -542,14 +503,12 @@ def get_statvfs_use_size(mountpoint, timeout=None):
 	except Exception:
 		return 0, 0, 0
 
-@cache_decorator
 def read_discard_support(sysfs_block_path):
 	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
 		return 'N/A'
 	dmbytes = read_int(os.path.join(sysfs_block_path, "queue", "discard_max_bytes"))
 	return 'Yes' if dmbytes > 0 else 'No'
 
-@cache_decorator
 def get_real_sysfs_device_path(sysfs_block_path):
 	"""
 	Return the sysfs 'device' directory for this block node (resolves partition
@@ -561,7 +520,6 @@ def get_real_sysfs_device_path(sysfs_block_path):
 	except Exception:
 		return dev_link
 
-@cache_decorator
 def read_model_and_serial(sysfs_block_path):
 	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
 		return '', ''
@@ -635,7 +593,6 @@ def parse_darwin_mount_line(line):
 	fstype = options[0] if options else ""
 	return device_name, MountEntry(mount_point, fstype, options)
 
-@cache_decorator
 def parseMount():
 	mount_table = defaultdict(list)
 	def add(parsed):
@@ -679,7 +636,6 @@ def get_blocks():
 		debug_exc('get_blocks linux', e)
 	return block_devices
 
-@cache_decorator
 def is_block_device(devpath):
 	try:
 		st_mode = os.stat(devpath).st_mode
@@ -741,7 +697,6 @@ def is_partition(sysfs_block_path):
 		return False
 	return os.path.exists(os.path.join(sysfs_block_path, "partition"))
 
-@cache_decorator
 def get_partition_parent_name(name):
 	if not name:
 		return None
@@ -987,9 +942,6 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	# One deadline for the whole refresh: a smartctl stuck in D-state on a dying
 	# disk can't be killed, so waiting `timeout` per partition would add up.
 	deadline = time.monotonic() + timeout if timeout else None
-	# Refresh every cache each call so watch mode picks up remounts, hot-swapped
-	# drives, label/size/UUID changes, etc. Throughput iterators in tptDict stay live.
-	clear_caches()
 	output_fields = resolve_output_fields(output, exclude)
 	if not output_fields:
 		print("No valid output fields specified.", file=sys.stderr)

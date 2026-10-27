@@ -43,10 +43,6 @@ def test_get_partition_parent_name_disk_vs_partition(tmp_path, monkeypatch):
 
     redirect_sys_class_block(tmp_path, monkeypatch)
     monkeypatch.setattr(statblk, "is_block_device", lambda p: p == "/dev/sda")
-    for fn in (statblk.get_partition_parent_name, statblk.is_block_device):
-        clear = getattr(fn, "cache_clear", None)
-        if clear:
-            clear()
 
     assert statblk.get_partition_parent_name("sda") == "/dev/sda"
     assert statblk.get_partition_parent_name("sda1") == "/dev/sda"

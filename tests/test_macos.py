@@ -21,8 +21,6 @@ def test_get_macos_diskutil_info(monkeypatch):
         "run_command",
         lambda *a, **k: DISKUTIL_INFO_ALL_SAMPLE.strip("\n").split("\n") + [""],
     )
-    if hasattr(statblk.get_macos_diskutil_info, "cache_clear"):
-        statblk.get_macos_diskutil_info.cache_clear()
     info = statblk.get_macos_diskutil_info(timeout=1)
     assert "/dev/disk3s1" in info
     assert info["/dev/disk3s1"]["SIZE_BYTES"] == 107374182400
