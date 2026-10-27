@@ -169,6 +169,13 @@ Uses sysfs, `/proc/self/mountinfo`, `lsblk`, and optionally `smartctl`.
 
 Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device sysfs stats). APFS snapshot nodes such as the sealed system volume (`disk3s1s1` on `/`) are listed.
 
+## Upgrading to 1.57 from 1.56
+
+- multiCMD 1.56 or newer is required (the embedded copy is 1.56).
+- With no `lsblk` installed, the "lsblk not found" note now goes to stderr after the table, not before it: once per run, and under every table while `-w` redraws a terminal, so it no longer vanishes at once. It also shows with `--sudo` now.
+- `--debug` no longer prints the "smartctl not found" hint; the SMART column already says `NO SMARTCTL`.
+- Library callers: `get_drives_info` no longer prints the lsblk note, and `cache_decorator`, `clear_caches` and `debug_msg` are gone.
+
 ## Development
 
 Install test deps:
