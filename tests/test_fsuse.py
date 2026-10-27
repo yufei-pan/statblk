@@ -22,16 +22,6 @@ def test_get_statvfs_use_size_excludes_reserved(monkeypatch):
     assert used != total - avail  # reserved must not count as used
 
 
-def test_fsuse_percent_matches_df_ceiling():
-    used, avail = 3515, 6485  # arbitrary bytes
-    denom = used + avail
-    pct = (used * 100) // denom
-    if (used * 100) % denom:
-        pct += 1
-    # sanity: this is the formula get_drives_info must use
-    assert pct == 36
-
-
 @pytest.fixture
 def hung_statvfs(monkeypatch):
     """os.statvfs that blocks like a hard NFS mount whose server is gone."""
