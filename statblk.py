@@ -215,7 +215,7 @@ CLljLKdn/G[02Y;;Zfb)uFOuhq=\qc$sEDpFlB-pB>e!O$27\5n9&2K)J(]Q2$L'Xa9E%ul"VMoUO?M8
 version = '1.57'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2026-10-27'
+COMMIT_DATE = '2026-10-26'
 
 # smartmontools installs into sbin, which non-root PATHs often omit (e.g. Debian),
 # yet `--sudo` exists exactly for non-root users who want SMART.
