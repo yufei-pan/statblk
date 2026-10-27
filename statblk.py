@@ -1114,7 +1114,6 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 				continue
 			device_properties['SIZE'] = format_size(size_bytes, print_bytes, use_1024)
 			output_list.append([device_properties[output_field] for output_field in output_fields])
-	multiCMD.join_threads(timeout=_remaining(deadline))
 	if filter_patterns and not match_devname_only:
 		output_list = filter_rows(output_list, filter_patterns, invert_match)
 	elif invert_match and not filter_patterns:

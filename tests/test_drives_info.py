@@ -408,12 +408,9 @@ def test_stuck_smartctl_waited_once_and_marked_timeout(tmp_path, monkeypatch):
     monkeypatch.setattr(statblk, "SMARTCTL_PATH", "/usr/sbin/smartctl")
     stuck = FakeCmdResult([], None, alive=True)
     _patch_multicmd(monkeypatch, stuck)
-    join_threads_calls = []
-    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: join_threads_calls.append(k))
     rows = statblk.get_drives_info(output="NAME,SMART", timeout=2)
     assert rows[1:] == [["sda1", "TIMEOUT"], ["sda2", "TIMEOUT"], ["sda3", "TIMEOUT"]]
     assert len(stuck.join_timeouts) == 1
-    assert len(join_threads_calls) == 1
 
 
 def test_hung_mount_shown_as_timeout(monkeypatch):
