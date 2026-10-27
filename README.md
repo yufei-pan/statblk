@@ -148,6 +148,8 @@ statblk -w 0 nvme0 # same via flag
 
 A problem beats an unknown, and both kinds of rows are listed. Exit `3` exists so that "not checked" never looks like "healthy" in a sweep. For a space-only check use `-x SMART`; to skip a device that has no SMART at all (an SD card, a USB stick) filter it out, e.g. `statblk --check -D -v mmcblk`. `FSUSE%` and `SMART` are always added to the shown columns so you can see why a row failed; excluding one with `-x` turns that check off. Filters (`-M`, `-B`, patterns) and JSON output (`-j` / `-J`) work as usual, but filters narrow what is checked: `-M` and patterns skip disks with no mount of their own (md/LVM/ZFS/Ceph members, extra btrfs pool devices), so cluster sweeps should run plain `--check`. `--check` can't be combined with watch mode.
 
+Outside `--check`, Ctrl-C exits `130`, and a reader that closes the pipe early (`statblk | head`) ends the run quietly with `141` (128 + SIGPIPE).
+
 ```bash
 statblk --check || mail -s "disk alert on $(hostname)" ops@example.com   # cron
 statblk --check -x SMART --max_use 80                                    # space only
@@ -173,6 +175,7 @@ Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device s
 
 - multiCMD 1.56 or newer is required (the embedded copy is 1.56).
 - With no `lsblk` installed, the "lsblk not found" note now goes to stderr after the table, not before it: once per run, and under every table while `-w` redraws a terminal, so it no longer vanishes at once. It also shows with `--sudo` now.
+- A reader that closes the pipe early (`statblk | head`) now ends the run with exit status 141 (128 + SIGPIPE), not 1, so it can't be mistaken for `--check`'s "problem".
 - `--debug` no longer prints the "smartctl not found" hint; the SMART column already says `NO SMARTCTL`.
 - Library callers: `get_drives_info` no longer prints the lsblk note, and `cache_decorator`, `clear_caches` and `debug_msg` are gone.
 

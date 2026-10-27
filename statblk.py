@@ -1170,6 +1170,7 @@ SMART_HEALTHY = ('', 'OK', 'STANDBY')
 SMART_UNKNOWN = ('NO SMARTCTL', 'UNKNOWN', 'DENIED')
 # --check exit status, Nagios-style: problems beat unknowns.
 CHECK_OK, CHECK_PROBLEM, CHECK_UNKNOWN = 0, 1, 3
+EXIT_PIPE_CLOSED = 141  # the reader went away (`statblk | head`): 128 + SIGPIPE, as a shell reports it
 
 def check_rows(rows, max_use):
 	"""Return (rows to report, exit status) for --check.
@@ -1343,7 +1344,7 @@ def main():
 			os.dup2(devnull, sys.stdout.fileno())
 		except (OSError, ValueError):
 			pass
-		return 1
+		return EXIT_PIPE_CLOSED
 	# --check: silent exit 0 when healthy, so cron only mails on problems.
 	return check_status or None
 

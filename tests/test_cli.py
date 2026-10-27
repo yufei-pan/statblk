@@ -158,7 +158,7 @@ def test_broken_pipe_exits_quietly(monkeypatch):
     _patch_main_basics(monkeypatch, lambda **k: [["NAME"]])
     monkeypatch.setattr(statblk.sys, "stdout", _ClosedPipe())
     monkeypatch.setattr(statblk.sys, "argv", ["statblk"])
-    assert statblk.main() == 1
+    assert statblk.main() == 141
 
 
 def test_json_objects_output(monkeypatch, capsys):
