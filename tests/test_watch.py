@@ -152,6 +152,13 @@ def test_no_lsblk_note_when_no_shown_column_comes_from_lsblk(monkeypatch, capsys
     assert capsys.readouterr().err == ""
 
 
+@pytest.mark.parametrize("columns", ["NAME,SIZE", "NAME,LABEL"])
+def test_no_lsblk_note_for_columns_the_note_does_not_name(monkeypatch, capsys, columns):
+    _no_lsblk(monkeypatch)
+    _run(monkeypatch, ["statblk", "-o", columns], rows=[columns.split(","), ["sda1", "1 GiB"]])
+    assert capsys.readouterr().err == ""
+
+
 def test_no_lsblk_note_when_there_are_no_rows(monkeypatch, capsys):
     _no_lsblk(monkeypatch)
     _run(monkeypatch, ["statblk"], rows=[["NAME", "FSTYPE"]])

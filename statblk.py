@@ -232,6 +232,8 @@ _DEBUG_MODE = False
 LSBLK_PAIR_RE = re.compile(r'(\w+)="([^"]*)"')
 # Output columns that come (at least partly) from the lsblk call on Linux.
 LSBLK_FIELDS = {'SIZE', 'FSTYPE', 'UUID', 'LABEL', 'MODEL', 'SERIAL'}
+# The columns the note below names (SIZE and LABEL have their own sysfs and /dev/disk sources).
+LSBLK_NOTE_FIELDS = {'FSTYPE', 'UUID', 'MODEL', 'SERIAL'}
 LSBLK_MISSING_NOTE = "lsblk not found (it comes with util-linux): FSTYPE, UUID, MODEL and SERIAL come from sysfs and /dev/disk instead and may be incomplete."
 _OCTAL_ESCAPE_RE = re.compile(r'\\([0-7]{3})')
 _HEX_ESCAPE_RE = re.compile(rb'\\x([0-9a-fA-F]{2})')
@@ -1299,7 +1301,7 @@ def main():
 			if args.check:
 				results, check_status = check_rows(results, args.max_use)
 			# Only say why lsblk's columns may be incomplete when the output has rows and shows one of them.
-			note_due = bool(lsblk_note and sys.stderr is not None and len(results) > 1 and LSBLK_FIELDS.intersection(results[0]))
+			note_due = bool(lsblk_note and sys.stderr is not None and len(results) > 1 and LSBLK_NOTE_FIELDS.intersection(results[0]))
 			if args.json_objects:
 				import json
 				# Watch mode streams NDJSON: one compact document per refresh.
