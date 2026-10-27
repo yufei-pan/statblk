@@ -6,11 +6,11 @@ import pytest
 
 import statblk
 
-ROWS = [["NAME", "READ"], ["sda", "1 MiB/s"]]
+ROWS = [["NAME", "READ", "FSTYPE"], ["sda", "1 MiB/s", "ext4"]]
 CLEAR = "\x1b[H\x1b[J"
 
 
-def _run(monkeypatch, argv, tty=False, refreshes=2):
+def _run(monkeypatch, argv, tty=False, refreshes=2, rows=ROWS):
     """Run main() for up to `refreshes` refreshes; return (sleeps, get_drives_info kwargs).
 
     Needs capsys active so sys.stdout is the capture object whose isatty is patched.
@@ -22,7 +22,7 @@ def _run(monkeypatch, argv, tty=False, refreshes=2):
         if len(sleeps) >= refreshes:
             raise KeyboardInterrupt()
 
-    monkeypatch.setattr(statblk, "get_drives_info", lambda **k: calls.append(k) or [list(r) for r in ROWS])
+    monkeypatch.setattr(statblk, "get_drives_info", lambda **k: calls.append(k) or [list(r) for r in rows])
     monkeypatch.setattr(statblk.multiCMD, "set_sudo", lambda x: None)
     monkeypatch.setattr(statblk.multiCMD, "pretty_format_table", lambda r, **k: "TABLE")
     monkeypatch.setattr(statblk.time, "sleep", sleep)
@@ -130,3 +130,44 @@ def test_missing_lsblk_noted_once_in_json_watch_on_a_terminal(monkeypatch, capsy
     _no_lsblk(monkeypatch)
     _run(monkeypatch, ["statblk", "-w", "2", flag], tty=True, refreshes=3)
     assert capsys.readouterr().err.count("lsblk not found") == 1
+
+
+def test_no_lsblk_note_for_a_healthy_check(monkeypatch, capsys):
+    # --check prints nothing when healthy, and cron mails stderr.
+    _no_lsblk(monkeypatch)
+    _run(monkeypatch, ["statblk", "--check"], rows=[["NAME", "FSTYPE", "FSUSE%", "SMART"], ["sda1", "ext4", "10%", "OK"]])
+    out, err = capsys.readouterr()
+    assert out == "" and err == ""
+
+
+def test_lsblk_note_with_a_failing_check(monkeypatch, capsys):
+    _no_lsblk(monkeypatch)
+    _run(monkeypatch, ["statblk", "--check"], rows=[["NAME", "FSTYPE", "FSUSE%", "SMART"], ["sda1", "ext4", "95%", "OK"]])
+    assert capsys.readouterr().err.count("lsblk not found") == 1
+
+
+def test_no_lsblk_note_when_no_shown_column_comes_from_lsblk(monkeypatch, capsys):
+    _no_lsblk(monkeypatch)
+    _run(monkeypatch, ["statblk", "-o", "NAME,FSUSE%"], rows=[["NAME", "FSUSE%"], ["sda1", "10%"]])
+    assert capsys.readouterr().err == ""
+
+
+def test_no_lsblk_note_when_there_are_no_rows(monkeypatch, capsys):
+    _no_lsblk(monkeypatch)
+    _run(monkeypatch, ["statblk"], rows=[["NAME", "FSTYPE"]])
+    assert capsys.readouterr().err == ""
+
+
+def test_no_lsblk_note_on_macos(monkeypatch, capsys):
+    _no_lsblk(monkeypatch)
+    monkeypatch.setattr(statblk, "IS_DARWIN", True)
+    _run(monkeypatch, ["statblk"])
+    assert capsys.readouterr().err == ""
+
+
+def test_no_lsblk_note_when_stderr_is_closed(monkeypatch, capsys):
+    # With fd 2 closed sys.stderr is None, and print(file=None) would write the note into stdout (and into -j JSON).
+    _no_lsblk(monkeypatch)
+    monkeypatch.setattr(statblk.sys, "stderr", None)
+    _run(monkeypatch, ["statblk", "-j"])
+    json.loads(capsys.readouterr().out)

@@ -148,7 +148,7 @@ statblk -w 0 nvme0 # same via flag
 
 A problem beats an unknown, and both kinds of rows are listed. Exit `3` exists so that "not checked" never looks like "healthy" in a sweep. For a space-only check use `-x SMART`; to skip a device that has no SMART at all (an SD card, a USB stick) filter it out, e.g. `statblk --check -D -v mmcblk`. `FSUSE%` and `SMART` are always added to the shown columns so you can see why a row failed; excluding one with `-x` turns that check off. Filters (`-M`, `-B`, patterns) and JSON output (`-j` / `-J`) work as usual, but filters narrow what is checked: `-M` and patterns skip disks with no mount of their own (md/LVM/ZFS/Ceph members, extra btrfs pool devices), so cluster sweeps should run plain `--check`. `--check` can't be combined with watch mode.
 
-Outside `--check`, Ctrl-C exits `130`, and a reader that closes the pipe early (`statblk | head`) ends the run quietly with `141` (128 + SIGPIPE).
+In every mode, Ctrl-C exits `130`, and a reader that closes the pipe early (`statblk | head`) ends the run quietly with `141` (128 + SIGPIPE).
 
 ```bash
 statblk --check || mail -s "disk alert on $(hostname)" ops@example.com   # cron

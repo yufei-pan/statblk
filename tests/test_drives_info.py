@@ -48,7 +48,6 @@ def _patch_multicmd(monkeypatch, result):
         return result
 
     monkeypatch.setattr(statblk.multiCMD, "run_command", run_command)
-    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     return commands
 
@@ -59,7 +58,6 @@ def test_output_and_exclude_columns(monkeypatch):
         ['NAME="/dev/sda1" SIZE="1000" FSTYPE="ext4" UUID="u" LABEL="L"'], 0
     )
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
-    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     rows = statblk.get_drives_info(output="NAME,FSUSE%,MOUNTPOINT", exclude="FSUSE%", timeout=2)
     assert rows[0] == ["NAME", "MOUNTPOINT"]
@@ -72,7 +70,6 @@ def test_filter_patterns(monkeypatch):
     monkeypatch.setattr(statblk, "parseMount", lambda: mounts)
     fake = FakeCmdResult([], 0)
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
-    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     rows = statblk.get_drives_info(output="NAME,MOUNTPOINT", filter_patterns=["nvme"], timeout=2)
     names = [r[0] for r in rows[1:]]
@@ -87,7 +84,6 @@ def test_invert_match_row_filter(monkeypatch):
     monkeypatch.setattr(statblk, "parseMount", lambda: mounts)
     fake = FakeCmdResult([], 0)
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
-    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     rows = statblk.get_drives_info(
         output="NAME,MOUNTPOINT",
@@ -113,7 +109,6 @@ def test_invert_match_devname_only(monkeypatch):
     )
     fake = FakeCmdResult([], 0)
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
-    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     # -D + invert: exclude devices whose name matches "nvme"; mountpoint
     # "/mnt/nvme-backup" must not keep sda1 out (devname-only path).
@@ -132,7 +127,6 @@ def test_invert_match_no_patterns_header_only(monkeypatch):
     _patch_linux_basics(monkeypatch)
     fake = FakeCmdResult([], 0)
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
-    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     rows = statblk.get_drives_info(
         output="NAME,MOUNTPOINT", invert_match=True, timeout=2
@@ -146,7 +140,6 @@ def test_lsblk_join_uses_timeout(monkeypatch):
         ['NAME="/dev/sda1" SIZE="1000" FSTYPE="ext4" UUID="u" LABEL="L"'], 0
     )
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
-    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     statblk.get_drives_info(output="NAME,SIZE,UUID,LABEL,FSTYPE", timeout=7)
     assert fake.join_timeouts == [7]
@@ -171,7 +164,6 @@ def test_mounted_only_skips_unmounted(monkeypatch):
     _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/sda2"], mounts=mounts)
     fake = FakeCmdResult([], 0)
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
-    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     # Unmounted sda2 needs a non-zero size path when mounted_only=False; with
     # mounted_only=True it is skipped before size lookup.
@@ -195,7 +187,6 @@ def test_best_only_picks_shortest_mount(monkeypatch):
     _patch_linux_basics(monkeypatch, mounts=mounts)
     fake = FakeCmdResult([], 0)
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
-    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     rows_all = statblk.get_drives_info(output="NAME,MOUNTPOINT", best_only=False, timeout=2)
     assert sorted(r[1] for r in rows_all[1:]) == ["/data", "/data/long/path"]
@@ -210,7 +201,6 @@ def test_show_zero_size_devices(monkeypatch):
         ['NAME="/dev/sda1" SIZE="0" FSTYPE="" UUID="" LABEL=""'], 0
     )
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
-    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     hidden = statblk.get_drives_info(
         output="NAME,SIZE", show_zero_size_devices=False, timeout=2
@@ -237,7 +227,6 @@ def test_match_devname_only(monkeypatch):
     )
     fake = FakeCmdResult([], 0)
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
-    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     # Full-row filter: mountpoint /mnt/nvme-backup matches "nvme" too.
     rows_any = statblk.get_drives_info(
@@ -267,7 +256,6 @@ def test_formated_only(monkeypatch):
         0,
     )
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
-    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     rows = statblk.get_drives_info(
         output="NAME,FSTYPE,SIZE", formated_only=True, timeout=2
@@ -288,7 +276,6 @@ def test_pseudo_adds_mount_table_keys(monkeypatch):
     monkeypatch.setattr(statblk, "is_block_device", lambda p: p.startswith("/dev/"))
     fake = FakeCmdResult([], 0)
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
-    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     without = statblk.get_drives_info(
         output="NAME,MOUNTPOINT", pseudo=False, timeout=2

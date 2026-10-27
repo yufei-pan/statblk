@@ -60,7 +60,6 @@ def test_darwin_sealed_root_listed_without_pseudo(monkeypatch):
     monkeypatch.setattr(statblk, "parseMount", lambda: mounts)
     monkeypatch.setattr(statblk, "is_block_device", lambda p: True)
     monkeypatch.setattr(statblk, "get_statvfs_use_size", lambda mp, *a, **k: (1000, 350, 650))
-    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     rows = statblk.get_drives_info(output="NAME,MOUNTPOINT", timeout=2)
     assert rows[1:] == [["disk3s1s1", "/"]]
@@ -77,7 +76,6 @@ def test_darwin_formated_only_without_fstype_column(monkeypatch, output):
         "/dev/disk4s2": {"SIZE_BYTES": 2000, "FSTYPE": ""},
     }
     monkeypatch.setattr(statblk, "get_macos_diskutil_info", lambda timeout=4: info)
-    monkeypatch.setattr(statblk.multiCMD, "join_threads", lambda **k: None)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     rows = statblk.get_drives_info(output=output, formated_only=True, timeout=2)
     assert [r[0] for r in rows[1:]] == ["disk4s1"]

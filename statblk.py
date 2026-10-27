@@ -215,7 +215,7 @@ CLljLKdn/G[02Y;;Zfb)uFOuhq=\qc$sEDpFlB-pB>e!O$27\5n9&2K)J(]Q2$L'Xa9E%ul"VMoUO?M8
 version = '1.57'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2026-10-23'
+COMMIT_DATE = '2026-10-27'
 
 # smartmontools installs into sbin, which non-root PATHs often omit (e.g. Debian),
 # yet `--sudo` exists exactly for non-root users who want SMART.
@@ -688,11 +688,6 @@ def is_squashfs_loop(device_name, fstype):
 	(False, False)
 	"""
 	return fstype == 'squashfs' and os.path.basename(device_name).startswith('loop')
-
-def is_partition(sysfs_block_path):
-	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
-		return False
-	return os.path.exists(os.path.join(sysfs_block_path, "partition"))
 
 def get_partition_parent_name(name):
 	if not name:
@@ -1303,6 +1298,8 @@ def main():
 								)
 			if args.check:
 				results, check_status = check_rows(results, args.max_use)
+			# Only say why lsblk's columns may be incomplete when the output has rows and shows one of them.
+			note_due = bool(lsblk_note and sys.stderr is not None and len(results) > 1 and LSBLK_FIELDS.intersection(results[0]))
 			if args.json_objects:
 				import json
 				# Watch mode streams NDJSON: one compact document per refresh.
@@ -1323,7 +1320,7 @@ def main():
 					clear = '\033[H\033[J' if redraw else ''
 					table = f"{clear}{header}\n{table}"
 				print(table,flush=True)
-			if lsblk_note:
+			if note_due:
 				print(lsblk_note, file=sys.stderr, flush=True)
 				if not redraw:
 					lsblk_note = ''  # once per run, unless the next redraw wipes it
