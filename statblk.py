@@ -240,10 +240,6 @@ def debug_exc(context, exc):
 		print(f"DEBUG [{context}]: {exc}", file=sys.stderr)
 		traceback.print_exc()
 
-def debug_msg(context, msg):
-	if _DEBUG_MODE:
-		print(f"DEBUG [{context}]: {msg}", file=sys.stderr)
-
 def compile_filter_pattern(filter_patterns):
 	"""Compile CLI filter patterns into one regex.
 
@@ -950,8 +946,6 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	output_fields_set = set(output_fields)
 	# Filters may need data that isn't a displayed column (-F needs FSTYPE).
 	collect_fields = (output_fields_set | {'FSTYPE'}) if formated_only else output_fields_set
-	if 'SMART' in output_fields_set and not SMARTCTL_PATH:
-		debug_msg('SMART', 'smartctl not found in PATH or ' + os.pathsep.join(SMARTCTL_FALLBACK_DIRS) + '; SMART column will be empty')
 	macos_info = {}
 	if IS_DARWIN and {'SIZE','FSTYPE','UUID','LABEL','MODEL','SERIAL','DISCARD'}.intersection(collect_fields):
 		macos_info = get_macos_diskutil_info(timeout=timeout if timeout else 4)
@@ -1271,8 +1265,6 @@ def main():
 	except ImportError:
 		pass
 	args = parser.parse_args()
-	global _DEBUG_MODE
-	_DEBUG_MODE = args.debug
 	tptDict = {}
 	# Prefer explicit -w/--watch; otherwise peel a trailing integer from positionals
 	# (historical: `statblk sda 5` / `statblk 5`).

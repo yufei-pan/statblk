@@ -354,16 +354,6 @@ def test_model_serial_fall_back_to_sysfs_when_lsblk_fails(monkeypatch):
     assert rows[1:] == [["sda1", "SysfsModel", "SysfsSerial"]]
 
 
-def test_missing_smartctl_hint_only_in_debug(monkeypatch, capsys):
-    _patch_linux_basics(monkeypatch)
-    _patch_multicmd(monkeypatch, FakeCmdResult([], 0))
-    monkeypatch.setattr(statblk, "_DEBUG_MODE", False)
-    statblk.get_drives_info(output="NAME,SMART", timeout=2)
-    assert "smartctl" not in capsys.readouterr().err
-    statblk.get_drives_info(output="NAME,SMART", timeout=2, debug=True)
-    assert "smartctl" in capsys.readouterr().err
-
-
 def test_smartctl_only_runs_on_disks_with_sysfs_device(tmp_path, monkeypatch):
     make_sysfs_block(tmp_path, "sda", size_sectors=1)  # physical: has device/
     make_sysfs_block(tmp_path, "loop0", size_sectors=1, with_device=False)
