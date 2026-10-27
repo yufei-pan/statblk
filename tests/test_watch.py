@@ -90,3 +90,43 @@ def test_single_run_json_stays_indented(monkeypatch, capsys, flag):
     out = capsys.readouterr().out
     assert "\n " in out
     json.loads(out)
+
+
+def _no_lsblk(monkeypatch):
+    real_which = statblk.shutil.which
+    monkeypatch.setattr(statblk, "IS_DARWIN", False)
+    monkeypatch.setattr(statblk.shutil, "which", lambda name, **k: None if name == "lsblk" else real_which(name, **k))
+
+
+def test_missing_lsblk_noted_once_after_a_single_run(monkeypatch, capsys):
+    _no_lsblk(monkeypatch)
+    _run(monkeypatch, ["statblk"])
+    out, err = capsys.readouterr()
+    assert "TABLE" in out
+    assert err.count("lsblk not found") == 1 and "util-linux" in err
+
+
+def test_missing_lsblk_noted_once_when_watch_output_is_piped(monkeypatch, capsys):
+    _no_lsblk(monkeypatch)
+    _run(monkeypatch, ["statblk", "-w", "2"], refreshes=3)
+    assert capsys.readouterr().err.count("lsblk not found") == 1
+
+
+def test_missing_lsblk_noted_under_every_redrawn_table(monkeypatch, capsys):
+    _no_lsblk(monkeypatch)
+    _run(monkeypatch, ["statblk", "-w", "2"], tty=True, refreshes=3)
+    assert capsys.readouterr().err.count("lsblk not found") == 3
+
+
+def test_no_lsblk_note_when_lsblk_is_installed(monkeypatch, capsys):
+    monkeypatch.setattr(statblk, "IS_DARWIN", False)
+    monkeypatch.setattr(statblk.shutil, "which", lambda name, **k: "/usr/bin/" + name)
+    _run(monkeypatch, ["statblk", "-w", "2"], tty=True, refreshes=2)
+    assert "lsblk" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("flag", ["-j", "-J"])
+def test_missing_lsblk_noted_once_in_json_watch_on_a_terminal(monkeypatch, capsys, flag):
+    _no_lsblk(monkeypatch)
+    _run(monkeypatch, ["statblk", "-w", "2", flag], tty=True, refreshes=3)
+    assert capsys.readouterr().err.count("lsblk not found") == 1

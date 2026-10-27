@@ -232,6 +232,7 @@ _DEBUG_MODE = False
 LSBLK_PAIR_RE = re.compile(r'(\w+)="([^"]*)"')
 # Output columns that come (at least partly) from the lsblk call on Linux.
 LSBLK_FIELDS = {'SIZE', 'FSTYPE', 'UUID', 'LABEL', 'MODEL', 'SERIAL'}
+LSBLK_MISSING_NOTE = "lsblk not found (it comes with util-linux): FSTYPE, UUID, MODEL and SERIAL come from sysfs and /dev/disk instead and may be incomplete."
 _OCTAL_ESCAPE_RE = re.compile(r'\\([0-7]{3})')
 _HEX_ESCAPE_RE = re.compile(rb'\\x([0-9a-fA-F]{2})')
 
@@ -994,9 +995,6 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	serial_dict = {}
 	if (not IS_DARWIN) and LSBLK_FIELDS.intersection(collect_fields):
 		lsblk_result.thread.join(timeout)
-		# multiCMD's quiet=True hides its own "Command path not found" line.
-		if lsblk_result.returncode == 127:
-			print("lsblk not found (it comes with util-linux): FSTYPE, UUID, MODEL and SERIAL come from sysfs and /dev/disk instead and may be incomplete.", file=sys.stderr)
 		if lsblk_result.returncode == 0:
 			populate_lsblk_dicts(lsblk_result.stdout, collect_fields, uuid_dict, fstype_dict, label_dict, size_dict,
 								model_dict=model_dict, serial_dict=serial_dict)
@@ -1286,6 +1284,10 @@ def main():
 			named = {x.strip().upper() for x in (args.output + ',' + args.exclude).split(',')}
 			args.output += ''.join(',' + field for field in CHECK_FIELDS if field not in named)
 	multiCMD.set_sudo(args.sudo)
+	# multiCMD's quiet=True hides its "Command path not found" line, so say why lsblk's columns may be incomplete.
+	lsblk_note = LSBLK_MISSING_NOTE if not IS_DARWIN and not shutil.which('lsblk') else ''
+	# A terminal is redrawn in place (one write, so no flicker); piped output and JSON keep every refresh.
+	redraw = print_period > 0 and sys.stdout.isatty() and not (args.json or args.json_objects)
 	check_status = CHECK_OK
 	try:
 		while True:
@@ -1317,11 +1319,13 @@ def main():
 				table = multiCMD.pretty_format_table(safe_rows,full=args.full)
 				if print_period > 0:
 					header = f"Every {print_period:g}s on {socket.gethostname()}: {time.strftime('%Y-%m-%d %H:%M:%S')}"
-					# A terminal is redrawn in place (one write, so no flicker); piped
-					# output keeps every refresh, with the header as the boundary.
-					clear = '\033[H\033[J' if sys.stdout.isatty() else ''
+					clear = '\033[H\033[J' if redraw else ''
 					table = f"{clear}{header}\n{table}"
 				print(table,flush=True)
+			if lsblk_note:
+				print(lsblk_note, file=sys.stderr, flush=True)
+				if not redraw:
+					lsblk_note = ''  # once per run, unless the next redraw wipes it
 			if print_period <= 0:
 				break
 			time.sleep(print_period)
