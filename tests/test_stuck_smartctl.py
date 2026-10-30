@@ -33,13 +33,20 @@ def test_smartctl_under_sudo_is_found_by_the_real_process(tmp_path):
 
 
 def test_matching_is_by_comm_not_argv0(tmp_path):
-    # A wrapper (python smartctl.py ...) has another argv[0] but comm "smartctl" from the exec'd file.
+    # A script named smartctl run through its shebang has argv[0] "python3" but comm "smartctl".
     make_proc_process(tmp_path, 41, ["python3", "-H", "/dev/sda"], age=30)
     assert statblk.find_stuck_smartctl(2, proc=str(tmp_path)) == {"/dev/sda"}
 
 
+def test_smartctl_sudo_ran_by_file_descriptor_is_found_by_argv0(tmp_path):
+    # sudo with a digest in sudoers runs smartctl by fexecve: before Linux 6.14 its comm is the fd number.
+    make_proc_process(tmp_path, 41, ["/usr/sbin/smartctl", "-n", "standby", "-H", "/dev/sda"], age=30, comm="4")
+    make_proc_process(tmp_path, 42, ["/usr/bin/python3", "/dev/sdb"], age=30, comm="5")  # another fexecve'd program
+    assert statblk.find_stuck_smartctl(2, proc=str(tmp_path)) == {"/dev/sda"}
+
+
 def test_comm_with_parentheses_is_not_cut_at_the_first_one(tmp_path):
-    # comm "smartctl) (x" must not be read as "smartctl" (first ')'), nor may it break starttime.
+    # comm "smartctl) (x" must not be read as "smartctl" (cut at the first ')').
     make_proc_process(tmp_path, 41, ["smartctl", "-H", "/dev/sda"], age=30, comm="smartctl) (x")
     assert statblk.find_stuck_smartctl(2, proc=str(tmp_path)) == set()
 

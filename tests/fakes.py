@@ -104,6 +104,6 @@ def make_proc_process(proc, pid, argv, age, *, comm="smartctl", boot=1000, uptim
     (proc / "uptime").write_text("%d 3000.00\n" % (boot if uptime is None else uptime))
     (d / "cmdline").write_bytes("\0".join(argv).encode() + b"\0")
     ticks = int((boot - age) * os.sysconf("SC_CLK_TCK"))
-    # fields 3..21 after comm are zeros here; starttime is field 22
+    # field 3 is the state, fields 4..21 are zeros here; starttime is field 22
     (d / "stat").write_text("%d (%s) D %s%d 0 0\n" % (pid, comm, "0 " * 18, ticks))
     return d

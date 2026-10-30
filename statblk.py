@@ -816,8 +816,9 @@ def find_stuck_smartctl(older_than, proc='/proc'):
 
 	On a dying disk smartctl sits in uninterruptible I/O and can't be killed, so
 	starting another one only adds to the pile. Linux only: no /proc, empty set.
-	Only smartctl's own cmdline is read: reading another process's can block on
-	its memory (swap on a dead disk, a wedged mm lock), and stat touches none.
+	Only a smartctl's cmdline is read (and that of a process whose comm is a
+	number, see below): reading another process's can block on its memory (swap
+	on a dead disk, a wedged mm lock), and stat touches none.
 	"""
 	stuck = set()
 	try:
@@ -831,11 +832,16 @@ def find_stuck_smartctl(older_than, proc='/proc'):
 			stat = read_text(os.path.join(proc, pid, 'stat'))
 			# comm (field 2, the executable's basename) may hold spaces and parentheses:
 			# it runs to the last ')', and the numbered fields follow it.
-			if stat[stat.index('(') + 1:stat.rindex(')')] != 'smartctl':
+			comm = stat[stat.index('(') + 1:stat.rindex(')')]
+			# sudo runs a command pinned by digest through its file descriptor (fexecve):
+			# before Linux 6.14 its comm is then that number, so argv[0] tells.
+			if comm != 'smartctl' and not comm.isdigit():
 				continue
 			starttime = int(stat.rsplit(')', 1)[1].split()[19])
 			if boot - starttime / clk_tck > older_than:
 				argv = read_text(os.path.join(proc, pid, 'cmdline')).split('\0')
+				if comm.isdigit() and os.path.basename(argv[0]) != 'smartctl':
+					continue
 				stuck.update(os.path.realpath(a) for a in argv[1:] if a.startswith('/dev/'))
 		except (AttributeError, IndexError, OSError, ValueError):
 			continue  # gone or unreadable: not ours to report
