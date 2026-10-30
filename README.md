@@ -48,7 +48,7 @@ By default every column that has data is shown (a column that is empty for every
 | `SIZE` | Device or filesystem size |
 | `FSUSE%` | Filesystem space used (mounted entries); `TIMEOUT` for a mount that didn't answer (e.g. dead NFS server) |
 | `MOUNTPOINT` | Mount path |
-| `SMART` | SMART health: `OK`, `STANDBY` (spun-down drive, not woken), a failure such as `FAILED!`, `TIMEOUT` (smartctl stuck), or why it couldn't be read (`NO SMARTCTL`, `DENIED`, `UNKNOWN`). Blank for devices without SMART (loop, dm, md, zram, nbd) |
+| `SMART` | SMART health: `OK`, `STANDBY` (spun-down drive, not woken), a failure such as `FAILED!`, `TIMEOUT` (smartctl stuck, or an earlier one on the disk still is), or why it couldn't be read (`NO SMARTCTL`, `DENIED`, `UNKNOWN`). Blank for devices without SMART (loop, dm, md, zram, nbd) |
 | `LABEL` | Volume label |
 | `UUID` | Filesystem UUID |
 | `MODEL` | Drive model (from udev via `lsblk`, sysfs fallback) |
@@ -162,7 +162,7 @@ mssh 'nodes[1-64]' 'statblk --check'                                     # whole
 
 Uses sysfs, `/proc/self/mountinfo`, `lsblk`, and optionally `smartctl`.
 
-- **SMART** requires `smartctl` (smartmontools). Use `--sudo` if permission is denied. It only runs against hardware-backed disks (not loop, dm, md, zram, nbd). smartctl runs with `-n standby`, so spun-down drives are not woken (not even by watch mode); they show `STANDBY` until they're next awake. This is verified for SATA drives on the kernel's libata driver; drives behind USB enclosures or some RAID/SAS controllers may still spin up, because smartctl's device-type probe goes through the bridge. On a hardware disk where SMART can't be read the column says why (`NO SMARTCTL`, `DENIED`, `UNKNOWN`); it is blank for virtual devices.
+- **SMART** requires `smartctl` (smartmontools). Use `--sudo` if permission is denied. It only runs against hardware-backed disks (not loop, dm, md, zram, nbd). smartctl runs with `-n standby`, so spun-down drives are not woken (not even by watch mode); they show `STANDBY` until they're next awake. This is verified for SATA drives on the kernel's libata driver; drives behind USB enclosures or some RAID/SAS controllers may still spin up, because smartctl's device-type probe goes through the bridge. On a hardware disk where SMART can't be read the column says why (`NO SMARTCTL`, `DENIED`, `UNKNOWN`); it is blank for virtual devices. A smartctl stuck in uninterruptible I/O on a dying disk can't be killed and outlives the refresh (and statblk); while one older than `--timeout` is still running on a disk, statblk starts no new one and shows `TIMEOUT` for that disk at once, so `-w` and repeated runs don't pile them up. With `--timeout 0` this check is off.
 - **squashfs on loop devices** (snap packages, AppImages) is hidden by default: these images are read-only and always 100% full. Use `--show_squashfs` to list them. Other loop devices, such as a mounted disk image, are always shown.
 - **autofs** trigger mounts are ignored (stat-ing them would trigger the automount); the real filesystem appears once mounted.
 - **READ / WRITE** come from `/sys/class/block/*/stat` (always 512-byte sector units): a since-boot average on the first query, live rates on later watch refreshes (see [READ / WRITE numbers](#read--write-numbers)).
@@ -170,6 +170,10 @@ Uses sysfs, `/proc/self/mountinfo`, `lsblk`, and optionally `smartctl`.
 ### macOS
 
 Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device sysfs stats). APFS snapshot nodes such as the sealed system volume (`disk3s1s1` on `/`) are listed.
+
+## Upgrading to 1.58 from 1.57
+
+- On Linux, a disk whose earlier smartctl is still stuck (older than `--timeout`, from a previous refresh, run, cron job or another tool) now shows `TIMEOUT` at once and gets no new smartctl. `statblk -w` and repeated runs no longer pile up stuck smartctl processes, and the refresh no longer waits out `--timeout` for that disk. macOS and `--timeout 0` are unchanged.
 
 ## Upgrading to 1.57 from 1.56
 

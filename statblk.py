@@ -212,10 +212,10 @@ CLljLKdn/G[02Y;;Zfb)uFOuhq=\qc$sEDpFlB-pB>e!O$27\5n9&2K)J(]Q2$L'Xa9E%ul"VMoUO?M8
 6,EDg)R;^Qe&2cNV!!2,2!U8&8s)4"iZ,C;P!WW3#!!HG.'''
 	exec(lzma.decompress(base64.a85decode(_SRC_B85)).decode("utf-8"), multiCMD.__dict__)
 
-version = '1.57'
+version = '1.58'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2026-10-26'
+COMMIT_DATE = '2026-10-29'
 
 # smartmontools installs into sbin, which non-root PATHs often omit (e.g. Debian),
 # yet `--sudo` exists exactly for non-root users who want SMART.
@@ -805,6 +805,33 @@ def _remaining(deadline):
 		return None
 	return max(0.0, deadline - time.monotonic())
 
+def find_stuck_smartctl(older_than, proc='/proc'):
+	"""Set of disks (real paths) that already have a smartctl running for more
+	than `older_than` seconds, from an earlier refresh, run, cron or other tool.
+
+	On a dying disk smartctl sits in uninterruptible I/O and can't be killed, so
+	starting another one only adds to the pile. Linux only: no /proc, empty set.
+	"""
+	stuck = set()
+	try:
+		uptime = float(read_text(os.path.join(proc, 'uptime')).split()[0])
+		clk_tck = os.sysconf('SC_CLK_TCK')
+		pids = [p for p in os.listdir(proc) if p.isdigit()]
+	except (AttributeError, IndexError, OSError, ValueError):
+		return stuck
+	for pid in pids:
+		try:
+			argv = read_text(os.path.join(proc, pid, 'cmdline')).split('\0')
+			if os.path.basename(argv[0]) != 'smartctl':
+				continue
+			# comm (field 2) may hold spaces and parentheses: count fields after the last ')'.
+			starttime = int(read_text(os.path.join(proc, pid, 'stat')).rsplit(')', 1)[1].split()[19])
+			if uptime - starttime / clk_tck > older_than:
+				stuck.update(os.path.realpath(a) for a in argv[1:] if a.startswith('/dev/'))
+		except (AttributeError, IndexError, OSError, ValueError):
+			continue  # gone or unreadable: not ours to report
+	return stuck
+
 # What `smartctl -n standby` prints when it skips a spun-down drive (SLEEP,
 # STANDBY, or variants like STANDBY_Y) instead of waking it.
 SMART_STANDBY_RE = re.compile(r'device is in (sleep|standby)\w* mode')
@@ -953,14 +980,20 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	block_devices = get_blocks()
 	for stale_device in [k for k in tptDict if k not in block_devices]:
 		del tptDict[stale_device]
-	smart_infos = {}
+	smart_infos = {}  # None: an earlier smartctl on that disk is still stuck, so none was started
 	smart_status = {}
+	stuck_disks = None
 	for block_device in block_devices:
 		if 'SMART' in output_fields_set and SMARTCTL_PATH:
 			parent_name = get_partition_parent_name(block_device)
 			if has_smart(parent_name):
 				if parent_name not in smart_infos:
-					smart_infos[parent_name] = multiCMD.run_command(f'{SMARTCTL_PATH} -n standby -H {parent_name}',timeout=timeout,quiet=True,wait_for_return=False,return_object=True)
+					if timeout and stuck_disks is None:
+						stuck_disks = find_stuck_smartctl(timeout)
+					if timeout and os.path.realpath(parent_name) in stuck_disks:
+						smart_infos[parent_name] = None
+					else:
+						smart_infos[parent_name] = multiCMD.run_command(f'{SMARTCTL_PATH} -n standby -H {parent_name}',timeout=timeout,quiet=True,wait_for_return=False,return_object=True)
 		if block_device not in tptDict:
 			if IS_DARWIN:
 				tptDict[block_device] = get_read_write_rate_throughput_iter(block_device)
@@ -1039,8 +1072,9 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			if parent_name in smart_infos:
 				if parent_name not in smart_status:
 					smart_info_obj = smart_infos[parent_name]
-					smart_info_obj.thread.join(_remaining(deadline))
-					if smart_info_obj.thread.is_alive():
+					if smart_info_obj is not None:
+						smart_info_obj.thread.join(_remaining(deadline))
+					if smart_info_obj is None or smart_info_obj.thread.is_alive():
 						smart_status[parent_name] = 'TIMEOUT'
 					else:
 						# smartctl answered but gave no verdict (RAID HBA, unsupported device).

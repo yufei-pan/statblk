@@ -34,6 +34,7 @@ def _patch_linux_basics(monkeypatch, devices=None, mounts=None):
     monkeypatch.setattr(statblk, "get_read_write_rate_throughput_iter", fake_tpt)
     # Keep unit tests off the host's real sysfs / smartctl.
     monkeypatch.setattr(statblk, "SMARTCTL_PATH", None)
+    monkeypatch.setattr(statblk, "find_stuck_smartctl", lambda older_than: set())
     monkeypatch.setattr(statblk, "read_model_and_serial", lambda p: ("", ""))
     monkeypatch.setattr(statblk, "read_discard_support", lambda p: "N/A")
     monkeypatch.setattr(statblk, "read_size", lambda p: 1000)
@@ -388,6 +389,44 @@ def test_stuck_smartctl_waited_once_and_marked_timeout(tmp_path, monkeypatch):
     rows = statblk.get_drives_info(output="NAME,SMART", timeout=2)
     assert rows[1:] == [["sda1", "TIMEOUT"], ["sda2", "TIMEOUT"], ["sda3", "TIMEOUT"]]
     assert len(stuck.join_timeouts) == 1
+
+
+def test_disk_with_stuck_smartctl_gets_no_new_one(tmp_path, monkeypatch):
+    make_sysfs_block(tmp_path, "sda", size_sectors=1)
+    make_sysfs_block(tmp_path, "sdb", size_sectors=1)
+    _patch_linux_basics(
+        monkeypatch, devices=["/dev/sda1", "/dev/sdb1"], mounts=defaultdict(list)
+    )
+    monkeypatch.setattr(statblk, "get_partition_parent_name", lambda p: p[:-1])
+    redirect_sys_class_block(tmp_path, monkeypatch)
+    monkeypatch.setattr(statblk, "SMARTCTL_PATH", "/usr/sbin/smartctl")
+    asked = []
+    monkeypatch.setattr(statblk, "find_stuck_smartctl", lambda older_than: asked.append(older_than) or {"/dev/sda"})
+    smart = FakeCmdResult(["SMART overall-health self-assessment test result: PASSED"])
+    commands = _patch_multicmd(monkeypatch, smart)
+    rows = statblk.get_drives_info(output="NAME,SMART", timeout=2)
+    assert [c for c in commands if "smartctl" in c] == ["/usr/sbin/smartctl -n standby -H /dev/sdb"]
+    assert rows[1:] == [["sda1", "TIMEOUT"], ["sdb1", "OK"]]
+    assert asked == [2]  # one scan per refresh
+    assert len(smart.join_timeouts) == 1  # only sdb's: sda's TIMEOUT waited for nothing
+
+
+def test_stuck_check_skipped_without_timeout(tmp_path, monkeypatch):
+    # -t 0 waits forever and keeps today's behaviour: no /proc scan, smartctl starts.
+    make_sysfs_block(tmp_path, "sda", size_sectors=1)
+    _patch_linux_basics(monkeypatch)
+    redirect_sys_class_block(tmp_path, monkeypatch)
+    monkeypatch.setattr(statblk, "SMARTCTL_PATH", "/usr/sbin/smartctl")
+    asked = []
+    monkeypatch.setattr(statblk, "find_stuck_smartctl", lambda older_than: asked.append(older_than) or {"/dev/sda"})
+    commands = _patch_multicmd(monkeypatch, FakeCmdResult(
+        ["SMART overall-health self-assessment test result: PASSED"]
+    ))
+    rows = statblk.get_drives_info(output="NAME,SMART", timeout=2)
+    assert rows[1:] == [["sda1", "TIMEOUT"]] and asked == [2] and commands == []
+    rows = statblk.get_drives_info(output="NAME,SMART", timeout=0)
+    assert rows[1:] == [["sda1", "OK"]] and asked == [2]
+    assert [c for c in commands if "smartctl" in c] == ["/usr/sbin/smartctl -n standby -H /dev/sda"]
 
 
 def test_hung_mount_shown_as_timeout(monkeypatch):
