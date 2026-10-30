@@ -93,13 +93,17 @@ def make_sysfs_block(
     return block
 
 
-def make_proc_process(proc, pid, argv, age, *, uptime=1000, comm="smartctl"):
-    """Add proc/<pid>/{cmdline,stat} for a process that started `age` seconds ago."""
+def make_proc_process(proc, pid, argv, age, *, comm="smartctl", boot=1000, uptime=None):
+    """Add proc/<pid>/{cmdline,stat} for a process that started `age` seconds ago.
+
+    `boot` is the seconds-since-boot the test patches in as statblk._boot_seconds;
+    `uptime` is what /proc/uptime says (lxcfs: a container's own, not the host's).
+    """
     d = proc / str(pid)
     d.mkdir(parents=True)
-    (proc / "uptime").write_text("%d 3000.00\n" % uptime)
+    (proc / "uptime").write_text("%d 3000.00\n" % (boot if uptime is None else uptime))
     (d / "cmdline").write_bytes("\0".join(argv).encode() + b"\0")
-    ticks = int((uptime - age) * os.sysconf("SC_CLK_TCK"))
+    ticks = int((boot - age) * os.sysconf("SC_CLK_TCK"))
     # fields 3..21 after comm are zeros here; starttime is field 22
     (d / "stat").write_text("%d (%s) D %s%d 0 0\n" % (pid, comm, "0 " * 18, ticks))
     return d

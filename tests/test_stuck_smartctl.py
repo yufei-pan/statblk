@@ -1,7 +1,12 @@
-import os
+import pytest
 
 import statblk
 from fakes import make_proc_process
+
+
+@pytest.fixture(autouse=True)
+def boot_1000(monkeypatch):
+    monkeypatch.setattr(statblk, "_boot_seconds", lambda: 1000)
 
 
 def test_old_smartctl_marks_its_disk(tmp_path):
@@ -27,8 +32,34 @@ def test_smartctl_under_sudo_is_found_by_the_real_process(tmp_path):
     assert statblk.find_stuck_smartctl(2, proc=str(tmp_path)) == {"/dev/sdb"}
 
 
-def test_comm_with_spaces_and_parenthesis(tmp_path):
-    make_proc_process(tmp_path, 41, ["smartctl", "-H", "/dev/sda"], age=30, comm="smart ctl) (x 1")
+def test_matching_is_by_comm_not_argv0(tmp_path):
+    # A wrapper (python smartctl.py ...) has another argv[0] but comm "smartctl" from the exec'd file.
+    make_proc_process(tmp_path, 41, ["python3", "-H", "/dev/sda"], age=30)
+    assert statblk.find_stuck_smartctl(2, proc=str(tmp_path)) == {"/dev/sda"}
+
+
+def test_comm_with_parentheses_is_not_cut_at_the_first_one(tmp_path):
+    # comm "smartctl) (x" must not be read as "smartctl" (first ')'), nor may it break starttime.
+    make_proc_process(tmp_path, 41, ["smartctl", "-H", "/dev/sda"], age=30, comm="smartctl) (x")
+    assert statblk.find_stuck_smartctl(2, proc=str(tmp_path)) == set()
+
+
+def test_no_cmdline_read_for_other_processes(tmp_path, monkeypatch):
+    # Reading another process's cmdline touches its memory and can hang on a wedged one.
+    make_proc_process(tmp_path, 41, ["dd", "of=/dev/sda"], age=30, comm="dd")
+    make_proc_process(tmp_path, 42, ["smartctl", "-H", "/dev/sdb"], age=30)
+    make_proc_process(tmp_path, 43, ["smartctl", "-H", "/dev/sdc"], age=1)
+    opened = []
+    real_read_text = statblk.read_text
+    monkeypatch.setattr(statblk, "read_text", lambda path: opened.append(path) or real_read_text(path))
+    assert statblk.find_stuck_smartctl(2, proc=str(tmp_path)) == {"/dev/sdb"}
+    cmdlines = [p for p in opened if p.endswith("/cmdline")]
+    assert cmdlines == [str(tmp_path / "42" / "cmdline")]  # not 41, and not the young 43
+
+
+def test_age_comes_from_boot_clock_not_proc_uptime(tmp_path):
+    # lxcfs: /proc/uptime is the container's (50 s), starttime counts from host boot.
+    make_proc_process(tmp_path, 41, ["smartctl", "-H", "/dev/sda"], age=30, uptime=50)
     assert statblk.find_stuck_smartctl(2, proc=str(tmp_path)) == {"/dev/sda"}
 
 
@@ -39,17 +70,25 @@ def test_unreadable_or_vanished_pid_is_skipped(tmp_path):
     (tmp_path / "43" / "stat").write_text("garbage")
     make_proc_process(tmp_path, 44, ["smartctl", "-H", "/dev/sdc"], age=30)
     (tmp_path / "44" / "stat").write_text("44 (smartctl) D 1 2")  # truncated
+    make_proc_process(tmp_path, 45, ["smartctl", "-H", "/dev/sdd"], age=30)
+    (tmp_path / "45" / "cmdline").unlink()  # exited after stat
     (tmp_path / "self").mkdir()
     assert statblk.find_stuck_smartctl(2, proc=str(tmp_path)) == {"/dev/sda"}
 
 
-def test_no_proc_is_an_empty_set(tmp_path):
+def test_no_proc_is_an_empty_set(tmp_path, monkeypatch):
+    make_proc_process(tmp_path, 41, ["smartctl", "-H", "/dev/sda"], age=30)
     assert statblk.find_stuck_smartctl(2, proc=str(tmp_path / "missing")) == set()
-    assert statblk.find_stuck_smartctl(2, proc=str(tmp_path)) == set()  # no uptime
+    # no boot clock (macOS, odd platform): nothing to compare against
+    def no_clock():
+        raise OSError("no CLOCK_BOOTTIME")
+    monkeypatch.setattr(statblk, "_boot_seconds", no_clock)
+    assert statblk.find_stuck_smartctl(2, proc=str(tmp_path)) == set()
 
 
 def test_by_id_symlink_argument_resolves_to_the_disk(tmp_path, monkeypatch):
     # /dev/disk/by-id/... is a symlink to the disk; the argument is matched by real path.
+    import os
     real_realpath = os.path.realpath
     monkeypatch.setattr(
         os.path, "realpath",

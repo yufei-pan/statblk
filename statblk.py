@@ -805,28 +805,37 @@ def _remaining(deadline):
 		return None
 	return max(0.0, deadline - time.monotonic())
 
+def _boot_seconds():
+	"""Seconds since boot, the clock /proc/<pid>/stat starttime counts from.
+	Not /proc/uptime: lxcfs shows a container's own uptime there. 7 is CLOCK_BOOTTIME on Linux (Python 3.6 lacks the name)."""
+	return time.clock_gettime(getattr(time, 'CLOCK_BOOTTIME', 7))
+
 def find_stuck_smartctl(older_than, proc='/proc'):
 	"""Set of disks (real paths) that already have a smartctl running for more
 	than `older_than` seconds, from an earlier refresh, run, cron or other tool.
 
 	On a dying disk smartctl sits in uninterruptible I/O and can't be killed, so
 	starting another one only adds to the pile. Linux only: no /proc, empty set.
+	Only smartctl's own cmdline is read: reading another process's can block on
+	its memory (swap on a dead disk, a wedged mm lock), and stat touches none.
 	"""
 	stuck = set()
 	try:
-		uptime = float(read_text(os.path.join(proc, 'uptime')).split()[0])
-		clk_tck = os.sysconf('SC_CLK_TCK')
 		pids = [p for p in os.listdir(proc) if p.isdigit()]
-	except (AttributeError, IndexError, OSError, ValueError):
+		boot = _boot_seconds()
+		clk_tck = os.sysconf('SC_CLK_TCK')
+	except (AttributeError, OSError, ValueError):
 		return stuck
 	for pid in pids:
 		try:
-			argv = read_text(os.path.join(proc, pid, 'cmdline')).split('\0')
-			if os.path.basename(argv[0]) != 'smartctl':
+			stat = read_text(os.path.join(proc, pid, 'stat'))
+			# comm (field 2, the executable's basename) may hold spaces and parentheses:
+			# it runs to the last ')', and the numbered fields follow it.
+			if stat[stat.index('(') + 1:stat.rindex(')')] != 'smartctl':
 				continue
-			# comm (field 2) may hold spaces and parentheses: count fields after the last ')'.
-			starttime = int(read_text(os.path.join(proc, pid, 'stat')).rsplit(')', 1)[1].split()[19])
-			if uptime - starttime / clk_tck > older_than:
+			starttime = int(stat.rsplit(')', 1)[1].split()[19])
+			if boot - starttime / clk_tck > older_than:
+				argv = read_text(os.path.join(proc, pid, 'cmdline')).split('\0')
 				stuck.update(os.path.realpath(a) for a in argv[1:] if a.startswith('/dev/'))
 		except (AttributeError, IndexError, OSError, ValueError):
 			continue  # gone or unreadable: not ours to report
@@ -988,9 +997,9 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			parent_name = get_partition_parent_name(block_device)
 			if has_smart(parent_name):
 				if parent_name not in smart_infos:
-					if timeout and stuck_disks is None:
-						stuck_disks = find_stuck_smartctl(timeout)
-					if timeout and os.path.realpath(parent_name) in stuck_disks:
+					if stuck_disks is None:
+						stuck_disks = find_stuck_smartctl(timeout) if timeout else set()
+					if os.path.realpath(parent_name) in stuck_disks:
 						smart_infos[parent_name] = None
 					else:
 						smart_infos[parent_name] = multiCMD.run_command(f'{SMARTCTL_PATH} -n standby -H {parent_name}',timeout=timeout,quiet=True,wait_for_return=False,return_object=True)
