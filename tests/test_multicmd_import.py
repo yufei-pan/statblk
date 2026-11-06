@@ -9,11 +9,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize("installed_version, uses_installed", [
-    ("1.56", True),
+    ("1.57", True),
     ("1.100", True),   # float('1.100') == 1.1 would wrongly reject it
     ("2.0", True),
-    ("1.55", False),   # older than the embedded copy
-    ("1.9", False),    # minor 9 < 56, though float('1.9') > 1.56
+    ("1.56", False),   # older than the embedded copy
+    ("1.9", False),    # minor 9 < 57, though float('1.9') > 1.57
     ("garbage", False),
     (None, False),     # module without a version attribute
 ])
@@ -30,4 +30,4 @@ def test_installed_multicmd_used_only_if_not_older_than_embedded(tmp_path, insta
     ).stdout.split()
     assert out[0] == str(uses_installed)
     if not uses_installed:
-        assert out[1] == "1.56"  # the embedded copy
+        assert out[1] == "1.57"  # the embedded copy

@@ -24,7 +24,7 @@ Optional shell tab completion:
 pip install 'statblk[completion]'
 ```
 
-Requires **Python 3.6+** and the [multiCMD](https://pypi.org/project/multiCMD/) package (>= 1.56).
+Requires **Python 3.6+** and the [multiCMD](https://pypi.org/project/multiCMD/) package (>= 1.57).
 
 ## Quick start
 
@@ -170,6 +170,11 @@ Uses sysfs, `/proc/self/mountinfo`, `lsblk`, and optionally `smartctl`.
 ### macOS
 
 Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device sysfs stats). APFS snapshot nodes such as the sealed system volume (`disk3s1s1` on `/`) are listed.
+
+## Upgrading to 1.59 from 1.58
+
+- multiCMD 1.57 or newer is required (the embedded copy is 1.57).
+- Faster command starts on Python 3.6 - 3.10, where the embedded multiCMD 1.57 imports only built-in modules in the wrapper that puts each command in its own process group (about 7 ms to 3.5 ms of CPU per command on Python 3.6.8). Nothing else about starting a command changes.
 
 ## Upgrading to 1.58 from 1.57
 
