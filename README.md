@@ -24,7 +24,7 @@ Optional shell tab completion:
 pip install 'statblk[completion]'
 ```
 
-Requires **Python 3.6+** and the [multiCMD](https://pypi.org/project/multiCMD/) package (>= 1.57).
+Requires **Python 3.6+** and the [multiCMD](https://pypi.org/project/multiCMD/) package (>= 1.56).
 
 ## Quick start
 
@@ -173,7 +173,7 @@ Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device s
 
 ## Upgrading to 1.59 from 1.58
 
-- multiCMD 1.57 or newer is required (the embedded copy is 1.57).
+- The embedded multiCMD is now 1.57. It runs whenever the installed multiCMD is older, so nothing needs upgrading (stock pip 9.0.3 on EL7 and EL8 cannot upgrade multiCMD, and does not have to).
 - Faster command starts on Python 3.6 - 3.10, where the embedded multiCMD 1.57 imports only built-in modules in the wrapper that puts each command in its own process group (about 7 ms to 3.5 ms of CPU per command on Python 3.6.8). Nothing else about starting a command changes.
 
 ## Upgrading to 1.58 from 1.57
