@@ -143,7 +143,26 @@ def test_lsblk_join_uses_timeout(monkeypatch):
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     statblk.get_drives_info(output="NAME,SIZE,UUID,LABEL,FSTYPE", timeout=7)
-    assert fake.join_timeouts == [7]
+    assert len(fake.join_timeouts) == 1
+    assert 0 < fake.join_timeouts[0] <= 7  # what is left of the refresh's one deadline
+
+
+def test_lsblk_is_waited_for_with_timeout_zero(monkeypatch):
+    # -t 0 is no limit, as on the SMART path: join(0) would return before a slow lsblk answers.
+    _patch_linux_basics(monkeypatch)
+
+    class SlowLsblk(FakeCmdResult):
+        def join(self, timeout=None):
+            super().join(timeout)
+            if timeout is None:  # the fake lsblk answers only for a caller that really waits
+                self.stdout = ['NAME="/dev/sda" SIZE="1000" SERIAL="SN123"']
+
+    fake = SlowLsblk([], 0)
+    monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
+    monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
+    rows = statblk.get_drives_info(output="NAME,SERIAL", timeout=0)
+    assert fake.join_timeouts == [None]
+    assert rows[1:] == [["sda1", "SN123"]]
 
 
 def test_mounts_reread_between_get_drives_info_calls(tmp_path, monkeypatch):

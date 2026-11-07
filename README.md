@@ -171,9 +171,15 @@ Uses sysfs, `/proc/self/mountinfo`, `lsblk`, and optionally `smartctl`.
 
 Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device sysfs stats). APFS snapshot nodes such as the sealed system volume (`disk3s1s1` on `/`) are listed.
 
+## Upgrading to 1.60 from 1.59
+
+- `-t 0` now waits for `lsblk` with no limit, as it already did for `smartctl`. Before, it did not wait at all, so a slow `lsblk` could leave SERIAL and other `lsblk` columns blank. With a limit, `lsblk` now gets what is left of the refresh's `--timeout`, not a fresh `--timeout` of its own.
+- The embedded multiCMD is now 1.58: no change to how commands run. The embedded copy also runs when the installed multiCMD fails to import in any way, not only when it is older or missing. multiCMD itself need not be upgraded.
+- With multiCMD 1.57 or earlier installed, pip 9 (stock on EL7 and EL8) without `--user` stops `pip3 install -U statblk` with `configparser.DuplicateOptionError`, because it upgrades dependencies too: use `pip3 install statblk==1.60`, `pip3 install -U --no-deps statblk`, or run `pip3 install -U pip` once. With `--user` it does not stop.
+
 ## Upgrading to 1.59 from 1.58
 
-- The embedded multiCMD is now 1.57. It runs whenever the installed multiCMD is older, so multiCMD itself need not be upgraded. On EL7 and EL8, stock pip 9.0.3 cannot upgrade multiCMD, so `pip3 install -U statblk` fails there: use `pip3 install statblk==1.59`, or upgrade pip first.
+- The embedded multiCMD is now 1.57. It runs whenever the installed multiCMD is older, so multiCMD itself need not be upgraded. With multiCMD 1.57 or earlier installed, pip 9 (stock on EL7 and EL8) without `--user` stops `pip3 install -U statblk` with `configparser.DuplicateOptionError`, because it upgrades dependencies too: use `pip3 install statblk==1.59`, `pip3 install -U --no-deps statblk`, or run `pip3 install -U pip` once. With `--user` it does not stop.
 - Faster command starts on Python 3.6 - 3.10, where the embedded multiCMD 1.57 imports only built-in modules in the wrapper that puts each command in its own process group (about 7 ms to 3.5 ms of CPU per command on Python 3.6.8). Nothing else about starting a command changes.
 
 ## Upgrading to 1.58 from 1.57

@@ -13,9 +13,3 @@ Approved known limitations and deferrals. Reviewers: read this first, and don't 
 - Why: nothing statblk can do makes `/proc` show processes the kernel hides from it.
 - Revisit when: someone runs statblk that way on a host with a dying disk.
 - Approved: 2026-10-29, the user chose "Known limitation (Recommended)".
-
-### `-t 0` does not wait for lsblk
-- Kind: deferred
-- What the operator sees: `statblk -t 0` does not wait for lsblk, because `lsblk_result.thread.join(0)` returns at once, where the SMART path takes 0 as no limit. With lsblk delayed 0.6 s by a fake, SERIAL stayed blank where `-t 2` showed it; the real lsblk won the race 5 of 5 times. Same in 1.58.
-- Why: old and rare. The fix is `join(_remaining(deadline))`.
-- Revisit when: the next statblk release.
