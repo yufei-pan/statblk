@@ -1,8 +1,13 @@
 import json
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
 import statblk
+
+ROOT = Path(statblk.__file__).resolve().parent
 
 
 def test_watch_flag_and_trailing_int(monkeypatch):
@@ -271,3 +276,14 @@ def test_show_squashfs_flag_passed_through(monkeypatch, argv, expected):
     monkeypatch.setattr(statblk.sys, "argv", argv)
     statblk.main()
     assert seen["show_squashfs"] is expected
+
+
+def test_help_and_readme_say_timeout_zero_means_no_limit():
+    help_text = subprocess.run(
+        [sys.executable, str(ROOT / "statblk.py"), "--help"],
+        stdout=subprocess.PIPE, universal_newlines=True, check=True,
+    ).stdout
+    assert "0: no limit" in " ".join(help_text.split())
+    timeout_row = next(line for line in (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
+                       if line.startswith("| `-t`, `--timeout`"))
+    assert "0: no limit" in timeout_row
