@@ -13,3 +13,9 @@ Approved known limitations and deferrals. Reviewers: read this first, and don't 
 - Why: nothing statblk can do makes `/proc` show processes the kernel hides from it.
 - Revisit when: someone runs statblk that way on a host with a dying disk.
 - Approved: 2026-10-29, the user chose "Known limitation (Recommended)".
+
+### `-t 0` on macOS still gives diskutil and mount fixed limits
+- Kind: deferred
+- What the operator sees: on macOS `-t 0` means no limit for lsblk, smartctl and statvfs, but `diskutil` still gets 4 s and `mount` 1 s.
+- Why: only the Linux paths were asked for here.
+- Revisit when: the next statblk release.
