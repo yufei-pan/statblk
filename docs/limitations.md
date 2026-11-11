@@ -13,3 +13,15 @@ Approved known limitations and deferrals. Reviewers: read this first, and don't 
 - Why: nothing statblk can do makes `/proc` show processes the kernel hides from it.
 - Revisit when: someone runs statblk that way on a host with a dying disk.
 - Approved: 2026-10-29, the user chose "Known limitation (Recommended)".
+
+### A diskutil or mount cut by `--timeout` on macOS leaves blank columns with no message
+- Kind: deferred
+- What the operator sees: on macOS, a `diskutil info -all` or `mount` that prints nothing for longer than `-t` is cut
+  (exit 124), and its columns (SIZE, MODEL, FSTYPE, MOUNTPOINT and others), or whole rows, come out blank, with nothing
+  on stderr and exit 0. `statblk --check` then prints nothing and exits 0, which reads as healthy. On the test Mac
+  `diskutil` is silent for 0.5 to 0.6 s of its 1 s run, so the 2 s default has about 3x room; `-t 0.5` blanks MODEL on
+  five rows (1.60 and 1.61 alike).
+- Why: `get_macos_diskutil_info` and `parseMount` read the output and ignore the exit status. Found by the 1.61 final
+  review; not this release's change (1.61 gives `mount` 2 s by default where 1.60 gave 1 s).
+- Revisit when: the next statblk release: report a 124 from either as a warning on stderr, and in `--check`.
+- Noted: 2026-11-11, from the 1.61 final review; a deferral, not asked.
