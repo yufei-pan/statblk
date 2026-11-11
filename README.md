@@ -105,7 +105,7 @@ From the second watch refresh on, READ / WRITE are **live rates**: bytes transfe
 
 | Flag | Description |
 |------|-------------|
-| `-t`, `--timeout` | Time budget per refresh in seconds for `lsblk`, `smartctl` and `statvfs` (default: 2; fractions allowed; 0: no limit) |
+| `-t`, `--timeout` | Time budget per refresh in seconds for `lsblk`, `smartctl` and `statvfs`; on macOS, how long `diskutil` and `mount` may each go without output (default: 2; fractions allowed; 0: no limit) |
 | `-w`, `--watch SECONDS` | Repeat output every SECONDS (watch mode; fractions allowed, e.g. `0.5`) |
 | `--check` | Health check: print only problem rows and exit 1, or print nothing and exit 0 (see [Health check](#health-check)) |
 | `--max_use PCT` | FSUSE% at or above which `--check` reports a filesystem (default: 90) |
@@ -170,6 +170,17 @@ Uses sysfs, `/proc/self/mountinfo`, `lsblk`, and optionally `smartctl`.
 ### macOS
 
 Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device sysfs stats). APFS snapshot nodes such as the sealed system volume (`disk3s1s1` on `/`) are listed.
+
+## Upgrading to 1.61 from 1.60
+
+- On macOS, `-t 0` now gives `diskutil` and `mount` no limit, as it already did for `smartctl` and `statvfs`. Before, `diskutil` got 4 s and `mount` 1 s, so a slow one left SIZE, FSTYPE, MOUNTPOINT and other columns blank.
+- On macOS, a non-zero `-t` now limits `mount` too. It gets `--timeout` (2 s by default), where it always got 1 s. `diskutil` gets `--timeout`, as before. Both limits count time without output.
+- Library callers: `get_drives_info()` with no `timeout` now waits without limit for every command. In 1.60 it printed a `TypeError` traceback and left the lsblk columns blank on Linux, and on macOS gave `diskutil` 4 s and `mount` 1 s.
+- The embedded multiCMD is now 1.61. It runs whenever the installed multiCMD is older than 1.61, so multiCMD itself need not be upgraded.
+- On Python 3.6 to 3.10, a Ctrl-C that stops a command just as it starts no longer crashes the Python that starts it. On 3.6 and 3.7 that crash left a core dump, which abrt or systemd-coredump then reported.
+- On Python 3.6 to 3.10, a Ctrl-C while `diskutil` or `mount` starts on macOS no longer leaves that command running after statblk ends.
+- A first Ctrl-C that lands in the few milliseconds when statblk starts `lsblk` or `smartctl` is now dropped a little more often (about 1 in 700 of those, against 1 in 1,400). Python prints "Exception ignored". Press Ctrl-C again.
+- With multiCMD 1.57 or earlier installed, pip 9 (stock on EL7 and EL8) without `--user` stops `pip3 install -U statblk` with `configparser.DuplicateOptionError`, because it upgrades dependencies too: use `pip3 install statblk==1.61`, `pip3 install -U --no-deps statblk`, or run `pip3 install -U pip` once. With `--user` it does not stop.
 
 ## Upgrading to 1.60 from 1.59
 

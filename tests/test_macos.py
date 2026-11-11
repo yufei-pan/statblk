@@ -57,7 +57,7 @@ def test_darwin_sealed_root_listed_without_pseudo(monkeypatch):
     monkeypatch.setattr(statblk, "IS_DARWIN", True)
     _fake_dev_listing(monkeypatch, ["disk3", "disk3s1", "disk3s1s1"])
     mounts = defaultdict(list, {"/dev/disk3s1s1": [statblk.MountEntry("/", "apfs", ["apfs", "sealed"])]})
-    monkeypatch.setattr(statblk, "parseMount", lambda: mounts)
+    monkeypatch.setattr(statblk, "parseMount", lambda timeout=0: mounts)
     monkeypatch.setattr(statblk, "is_block_device", lambda p: True)
     monkeypatch.setattr(statblk, "get_statvfs_use_size", lambda mp, *a, **k: (1000, 350, 650))
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
@@ -69,13 +69,39 @@ def test_darwin_sealed_root_listed_without_pseudo(monkeypatch):
 def test_darwin_formated_only_without_fstype_column(monkeypatch, output):
     monkeypatch.setattr(statblk, "IS_DARWIN", True)
     _fake_dev_listing(monkeypatch, ["disk4s1", "disk4s2"])
-    monkeypatch.setattr(statblk, "parseMount", lambda: defaultdict(list))
+    monkeypatch.setattr(statblk, "parseMount", lambda timeout=0: defaultdict(list))
     monkeypatch.setattr(statblk, "is_block_device", lambda p: True)
     info = {
         "/dev/disk4s1": {"SIZE_BYTES": 1000, "FSTYPE": "ExFAT"},
         "/dev/disk4s2": {"SIZE_BYTES": 2000, "FSTYPE": ""},
     }
-    monkeypatch.setattr(statblk, "get_macos_diskutil_info", lambda timeout=4: info)
+    monkeypatch.setattr(statblk, "get_macos_diskutil_info", lambda timeout=0: info)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     rows = statblk.get_drives_info(output=output, formated_only=True, timeout=2)
     assert [r[0] for r in rows[1:]] == ["disk4s1"]
+
+
+@pytest.mark.parametrize("timeout, expected", [
+    (0, 0),      # -t 0: no limit, as for lsblk, smartctl and statvfs
+    (None, 0),   # the library default means no limit too
+    (3, 3),      # a non-zero -t bounds diskutil and mount as it bounds the rest
+    (0.5, 0.5),
+])
+def test_darwin_diskutil_and_mount_get_the_timeout(monkeypatch, timeout, expected):
+    monkeypatch.setattr(statblk, "IS_DARWIN", True)
+    monkeypatch.setattr(statblk, "DISKUTIL_PATH", "/usr/sbin/diskutil")
+    _fake_dev_listing(monkeypatch, ["disk3", "disk3s1"])
+    monkeypatch.setattr(statblk, "is_block_device", lambda p: True)
+    monkeypatch.setattr(statblk, "get_statvfs_use_size", lambda mp, *a, **k: (1000, 350, 650))
+    monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
+    calls = {}
+
+    def fake_run_command(command, timeout=0, **kwargs):
+        calls[command.split()[0].rsplit("/", 1)[-1]] = timeout
+        if command == "mount":
+            return list(DARWIN_MOUNT_SAMPLE)
+        return DISKUTIL_INFO_ALL_SAMPLE.strip("\n").split("\n") + [""]
+
+    monkeypatch.setattr(statblk.multiCMD, "run_command", fake_run_command)
+    statblk.get_drives_info(output="NAME,SIZE,MOUNTPOINT", timeout=timeout)
+    assert calls == {"diskutil": expected, "mount": expected}

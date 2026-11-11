@@ -14,8 +14,14 @@ Approved known limitations and deferrals. Reviewers: read this first, and don't 
 - Revisit when: someone runs statblk that way on a host with a dying disk.
 - Approved: 2026-10-29, the user chose "Known limitation (Recommended)".
 
-### `-t 0` on macOS still gives diskutil and mount fixed limits
+### A diskutil or mount cut by `--timeout` on macOS leaves blank columns with no message
 - Kind: deferred
-- What the operator sees: on macOS `-t 0` means no limit for lsblk, smartctl and statvfs, but `diskutil` still gets 4 s and `mount` 1 s.
-- Why: only the Linux paths were asked for here.
-- Revisit when: the next statblk release.
+- What the operator sees: on macOS, a `diskutil info -all` or `mount` that prints nothing for longer than `-t` is cut
+  (exit 124), and its columns (SIZE, MODEL, FSTYPE, MOUNTPOINT and others), or whole rows, come out blank, with nothing
+  on stderr and exit 0. `statblk --check` then prints nothing and exits 0, which reads as healthy. On the test Mac
+  `diskutil` is silent for 0.5 to 0.6 s of its 1 s run, so the 2 s default has about 3x room; `-t 0.5` blanks MODEL on
+  five rows (1.60 and 1.61 alike).
+- Why: `get_macos_diskutil_info` and `parseMount` read the output and ignore the exit status. Found by the 1.61 final
+  review; not this release's change (1.61 gives `mount` 2 s by default where 1.60 gave 1 s).
+- Revisit when: the next statblk release: report a 124 from either as a warning on stderr, and in `--check`.
+- Noted: 2026-11-11, from the 1.61 final review; a deferral, not asked.
