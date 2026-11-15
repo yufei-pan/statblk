@@ -280,7 +280,7 @@ TIMEOUT_RETURNCODE = 124
 # What is missing when --timeout stopped one of the commands statblk reads (see cut_note).
 CUT_WHAT = {
 	'diskutil': "unmounted devices may be missing, and UUID, LABEL, MODEL, SERIAL and DISCARD may be blank or N/A",
-	'mount': "mounted filesystems may show no MOUNTPOINT or FSUSE%, and with -M may be missing",
+	'mount': "mounted filesystems may be missing, or listed with no MOUNTPOINT or FSUSE%",
 	'lsblk': LSBLK_LACKS,
 }
 _OCTAL_ESCAPE_RE = re.compile(r'\\([0-7]{3})')
@@ -1330,7 +1330,7 @@ def cut_note(command, timeout):
 	"""The stderr line for a command --timeout stopped before it finished (see CUT_WHAT).
 
 	>>> cut_note('mount', 0.5)
-	'mount was stopped by -t 0.5 before it finished: mounted filesystems may show no MOUNTPOINT or FSUSE%, and with -M may be missing. A larger -t gives it longer.'
+	'mount was stopped by -t 0.5 before it finished: mounted filesystems may be missing, or listed with no MOUNTPOINT or FSUSE%. A larger -t gives it longer.'
 	"""
 	return f"{command} was stopped by -t {timeout:g} before it finished: {CUT_WHAT[command]}. A larger -t gives it longer."
 
