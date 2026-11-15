@@ -1417,6 +1417,11 @@ def main():
 	# A terminal is redrawn in place (one write, so no flicker); piped output and JSON keep every refresh.
 	redraw = print_period > 0 and sys.stdout.isatty() and not (args.json or args.json_objects)
 	check_status = CHECK_OK
+	# --check: the column a cut command can hide. mount: the FSUSE% of the filesystems it did not list. diskutil: an
+	# unmounted disk has no SIZE, so its row goes, SMART with it. lsblk: the same for a blank FSTYPE, only with -F.
+	cut_hides = {'mount': 'FSUSE%', 'diskutil': 'SMART'}
+	if args.formated_only:
+		cut_hides['lsblk'] = 'SMART'
 	try:
 		while True:
 			cut = []
@@ -1430,10 +1435,14 @@ def main():
 								timeout=args.timeout,debug=args.debug,cut=cut,
 								)
 			if args.check:
+				read = results[0] if results else ()
 				results, check_status = check_rows(results, args.max_use)
-				if 'mount' in cut and check_status == CHECK_OK:
-					# the filesystems mount did not list were not checked
-					check_status = CHECK_UNKNOWN
+				if check_status == CHECK_OK:
+					# A cut that can hide what --check reads makes the run unknown; any other cut stays quiet.
+					if any(cut_hides.get(command) in read for command in cut):
+						check_status = CHECK_UNKNOWN
+					else:
+						cut = []
 			# Only say why lsblk's columns may be incomplete when the output has rows and shows one of them.
 			note_due = bool(lsblk_note and sys.stderr is not None and len(results) > 1 and LSBLK_NOTE_FIELDS.intersection(results[0]))
 			if args.json_objects:

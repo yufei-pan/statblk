@@ -205,13 +205,56 @@ def test_check_with_mount_cut_still_reports_a_problem(monkeypatch, capsys):
     assert capsys.readouterr().err == MOUNT_CUT_LINE
 
 
-def test_check_with_diskutil_cut_says_so_and_stays_healthy(monkeypatch, capsys):
-    # diskutil fills no column --check looks at (FSUSE% comes from statvfs, SMART from smartctl).
-    code, tables = _run_main_cut(monkeypatch, ["statblk", "--check", "-t", "0.5"], [CHECK_ROWS[0], CHECK_ROWS[2]],
-                                 ["diskutil"])
-    assert not code and tables == []
+def _cut_line(command):
+    return statblk.cut_note(command, 0.5) + "\n"
+
+
+HEALTHY_ROWS = [CHECK_ROWS[0], CHECK_ROWS[2]]
+
+
+def test_check_with_diskutil_cut_is_unknown_and_says_why(monkeypatch, capsys):
+    # macOS: an unmounted disk has no SIZE without diskutil, so its row goes, and its SMART with it.
+    code, tables = _run_main_cut(monkeypatch, ["statblk", "--check", "-t", "0.5"], HEALTHY_ROWS, ["diskutil"])
+    assert code == 3
+    assert tables == []
     captured = capsys.readouterr()
     assert captured.out == "" and captured.err == DISKUTIL_CUT_LINE
+
+
+def test_check_with_diskutil_cut_still_reports_a_problem(monkeypatch, capsys):
+    code, tables = _run_main_cut(monkeypatch, ["statblk", "--check", "-t", "0.5"], CHECK_ROWS, ["diskutil"])
+    assert code == 1
+    assert tables == [[CHECK_ROWS[0], CHECK_ROWS[1]]]
+    assert capsys.readouterr().err == DISKUTIL_CUT_LINE
+
+
+@pytest.mark.parametrize("command, argv, rows", [
+    # a cut can only hide what --check reads: with that column off (-x), it changes nothing
+    ("diskutil", ["-x", "SMART"], [["NAME", "FSUSE%"], ["sda1", "10%"]]),
+    ("mount", ["-x", "FSUSE%"], [["NAME", "SMART"], ["sda", "OK"]]),
+    # lsblk feeds no check column; its blank FSTYPE drops a row (and its SMART) only with -F
+    ("lsblk", [], HEALTHY_ROWS),
+    ("lsblk", ["-x", "SMART", "-F"], [["NAME", "FSUSE%"], ["sda1", "10%"]]),
+])
+def test_check_with_a_cut_that_hides_nothing_it_reads_is_silent_and_healthy(monkeypatch, capsys, command, argv, rows):
+    code, tables = _run_main_cut(monkeypatch, ["statblk", "--check", "-t", "0.5"] + argv, rows, [command])
+    assert not code and tables == []
+    assert capsys.readouterr() == ("", "")
+
+
+def test_check_with_lsblk_cut_is_unknown_with_formated_only(monkeypatch, capsys):
+    # -F drops a device whose FSTYPE is blank, and an unmounted device's FSTYPE comes only from lsblk.
+    code, tables = _run_main_cut(monkeypatch, ["statblk", "--check", "-F", "-t", "0.5"], HEALTHY_ROWS, ["lsblk"])
+    assert code == 3 and tables == []
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == _cut_line("lsblk")
+
+
+def test_check_names_every_cut_when_it_is_not_healthy(monkeypatch, capsys):
+    # A run that reports a problem or an unknown says what was cut, whether or not that cut hides anything.
+    code, tables = _run_main_cut(monkeypatch, ["statblk", "--check", "-t", "0.5"], CHECK_ROWS, ["lsblk", "mount"])
+    assert code == 1 and tables == [[CHECK_ROWS[0], CHECK_ROWS[1]]]
+    assert capsys.readouterr().err == _cut_line("lsblk") + MOUNT_CUT_LINE
 
 
 def test_table_and_json_say_which_command_was_cut(monkeypatch, capsys):
