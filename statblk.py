@@ -1419,11 +1419,18 @@ def main():
 	redraw = print_period > 0 and sys.stdout.isatty() and not (args.json or args.json_objects)
 	check_status = CHECK_OK
 	told = set()  # the commands whose cut note was printed
-	# --check: the column a cut command can hide. mount: the FSUSE% of the filesystems it did not list. diskutil: an
-	# unmounted disk has no SIZE, so its row goes, SMART with it. lsblk: the same for a blank FSTYPE, only with -F.
-	cut_hides = {'mount': 'FSUSE%', 'diskutil': 'SMART'}
-	if args.formated_only:
-		cut_hides['lsblk'] = 'SMART'
+	# --check: the checked columns a cut command can hide, by blanking a cell it fills (mount: FSUSE%) or by dropping a
+	# row it decides, with the row's columns. mount decides which filesystems are mounted, so with -M the mounted rows
+	# (FSUSE% and SMART); diskutil's SIZE and, with -F, lsblk's FSTYPE decide the unmounted rows, which have no FSUSE%
+	# and which -M drops anyway. A pattern (not -D) matches what all three fill, so it makes each decide every row.
+	patterns = bool(args.filter_patterns) and not args.match_devname_only
+	def when(condition, columns):
+		return set(columns) if condition else set()
+	cut_hides = {
+		'mount': {'FSUSE%'} | when(args.mounted_only or patterns, CHECK_FIELDS),
+		'diskutil': when(patterns, CHECK_FIELDS) | when(not args.mounted_only, ['SMART']),
+		'lsblk': when(patterns, CHECK_FIELDS) | when(args.formated_only and not args.mounted_only, ['SMART']),
+	}
 	try:
 		while True:
 			cut = []
@@ -1441,7 +1448,7 @@ def main():
 				results, check_status = check_rows(results, args.max_use)
 				if check_status == CHECK_OK:
 					# A cut that can hide what --check reads makes the run unknown; any other cut stays quiet.
-					if any(cut_hides.get(command) in read for command in cut):
+					if any(cut_hides[command].intersection(read) for command in cut):
 						check_status = CHECK_UNKNOWN
 					else:
 						cut = []
