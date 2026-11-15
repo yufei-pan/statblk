@@ -16,7 +16,7 @@ import shutil
 import socket
 import stat
 import sys
-import threading
+import _thread
 import time
 import traceback
 from collections import defaultdict, namedtuple
@@ -495,10 +495,15 @@ def get_macos_diskutil_info(timeout=0, cut=None):
 			current[key.strip()] = value.strip()
 	return info_map
 
-# mountpoint -> daemon thread still blocked in os.statvfs from an earlier call.
+# mountpoint -> the done lock of a thread still blocked in os.statvfs from an earlier call (held until it returns).
 _HUNG_STATVFS = {}
 # Floor on the statvfs wait, so healthy mounts still get answered after a stuck
-# smartctl has used up the refresh deadline.
+# smartctl has used up the refresh deadline. Measured 2026-11-14 in Docker on a 32-core
+# host at load 210 to 226: 120,000 healthy statvfs calls through _statvfs_with_timeout
+# (thread start and wait included; /, tmpfs, /proc; Python 3.6, 3.11, 3.14) took
+# p99.9 11 to 14 ms and at most 119 ms, so 0.5 s leaves 4x room over the slowest. Each
+# mount first found hung after the deadline adds this much to that refresh (one already
+# known to hang adds nothing). Network mounts add their round trip (not measured here).
 STATVFS_MIN_WAIT = 0.5
 
 def _statvfs_with_timeout(mountpoint, timeout):
@@ -507,23 +512,29 @@ def _statvfs_with_timeout(mountpoint, timeout):
 	Returns None on timeout. The blocked thread can't be cancelled, so it is
 	remembered and later calls for that mountpoint return None right away
 	instead of piling up another stuck thread every watch refresh.
+
+	The thread is started by one C call, _thread.start_new_thread, and waited for on a bare lock it releases, so
+	the main thread takes no lock of threading's: a Ctrl-C that lands in threading.Thread.start() can leave its
+	_active_limbo_lock held, and on Python 3.6 the exit then waits for it for good (multiCMD 1.60's fix).
 	"""
 	hung = _HUNG_STATVFS.get(mountpoint)
 	if hung is not None:
-		if hung.is_alive():
+		if hung.locked():
 			return None
 		del _HUNG_STATVFS[mountpoint]
 	result = {}
+	done = _thread.allocate_lock()
+	done.acquire()
 	def run():
 		try:
 			result['st'] = os.statvfs(mountpoint)
 		except Exception as e:
 			result['error'] = e
-	thread = threading.Thread(target=run, daemon=True)
-	thread.start()
-	thread.join(timeout)
-	if thread.is_alive():
-		_HUNG_STATVFS[mountpoint] = thread
+		finally:
+			done.release()
+	_thread.start_new_thread(run, ())
+	if not done.acquire(True, timeout):
+		_HUNG_STATVFS[mountpoint] = done
 		return None
 	if 'error' in result:
 		raise result['error']
