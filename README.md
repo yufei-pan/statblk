@@ -24,7 +24,7 @@ Optional shell tab completion:
 pip install 'statblk[completion]'
 ```
 
-Requires **Python 3.6+** and the [multiCMD](https://pypi.org/project/multiCMD/) package (>= 1.56).
+Requires **Python 3.6+**. statblk carries a copy of [multiCMD](https://pypi.org/project/multiCMD/) (1.67): an installed multiCMD is used when it is at least as new, the copy otherwise.
 
 ## Quick start
 
@@ -174,6 +174,7 @@ Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device s
 ## Upgrading to 1.62 from 1.61
 
 - The embedded multiCMD is now 1.67. It runs whenever the installed multiCMD is older than 1.67, missing, or fails to import. Nothing statblk shows changes.
+- pip no longer installs multiCMD for statblk. The requirement guaranteed nothing, since statblk runs its own copy in place of an older one, and with stock pip 9 (EL7, EL8) and multiCMD 1.57 or older installed it stopped `pip3 install -U statblk` with `configparser.DuplicateOptionError`. A multiCMD installed only for statblk can stay or go.
 
 ## Upgrading to 1.61 from 1.60
 
@@ -184,17 +185,15 @@ Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device s
 - On Python 3.6 to 3.10, a Ctrl-C that stops a command just as it starts no longer crashes the Python that starts it. On 3.6 and 3.7 that crash left a core dump, which abrt or systemd-coredump then reported.
 - On Python 3.6 to 3.10, a Ctrl-C while `diskutil` or `mount` starts on macOS no longer leaves that command running after statblk ends.
 - A first Ctrl-C that lands in the few milliseconds when statblk starts `lsblk` or `smartctl` is now dropped a little more often (about 1 in 700 of those, against 1 in 1,400). Python prints "Exception ignored". Press Ctrl-C again.
-- With multiCMD 1.57 or earlier installed, pip 9 (stock on EL7 and EL8) without `--user` stops `pip3 install -U statblk` with `configparser.DuplicateOptionError`, because it upgrades dependencies too: use `pip3 install statblk==1.61`, `pip3 install -U --no-deps statblk`, or run `pip3 install -U pip` once. With `--user` it does not stop.
 
 ## Upgrading to 1.60 from 1.59
 
 - `-t 0` now waits for `lsblk` with no limit, as it already did for `smartctl`. Before, it did not wait at all, so a slow `lsblk` could leave SERIAL and other `lsblk` columns blank. With a limit, `lsblk` now gets what is left of the refresh's `--timeout`, not a fresh `--timeout` of its own.
 - The embedded multiCMD is now 1.58: no change to how commands run. The embedded copy also runs when the installed multiCMD fails to import in any way, not only when it is older or missing. multiCMD itself need not be upgraded.
-- With multiCMD 1.57 or earlier installed, pip 9 (stock on EL7 and EL8) without `--user` stops `pip3 install -U statblk` with `configparser.DuplicateOptionError`, because it upgrades dependencies too: use `pip3 install statblk==1.60`, `pip3 install -U --no-deps statblk`, or run `pip3 install -U pip` once. With `--user` it does not stop.
 
 ## Upgrading to 1.59 from 1.58
 
-- The embedded multiCMD is now 1.57. It runs whenever the installed multiCMD is older, so multiCMD itself need not be upgraded. With multiCMD 1.57 or earlier installed, pip 9 (stock on EL7 and EL8) without `--user` stops `pip3 install -U statblk` with `configparser.DuplicateOptionError`, because it upgrades dependencies too: use `pip3 install statblk==1.59`, `pip3 install -U --no-deps statblk`, or run `pip3 install -U pip` once. With `--user` it does not stop.
+- The embedded multiCMD is now 1.57. It runs whenever the installed multiCMD is older, so multiCMD itself need not be upgraded.
 - Faster command starts on Python 3.6 - 3.10, where the embedded multiCMD 1.57 imports only built-in modules in the wrapper that puts each command in its own process group (about 7 ms to 3.5 ms of CPU per command on Python 3.6.8). Nothing else about starting a command changes.
 
 ## Upgrading to 1.58 from 1.57
