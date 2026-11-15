@@ -273,14 +273,14 @@ LSBLK_PAIR_RE = re.compile(r'(\w+)="([^"]*)"')
 LSBLK_FIELDS = {'SIZE', 'FSTYPE', 'UUID', 'LABEL', 'MODEL', 'SERIAL'}
 # The columns the note below names (SIZE and LABEL have their own sysfs and /dev/disk sources).
 LSBLK_NOTE_FIELDS = {'FSTYPE', 'UUID', 'MODEL', 'SERIAL'}
-LSBLK_LACKS = "FSTYPE of an unmounted filesystem is blank, and UUID, MODEL and SERIAL come from sysfs and /dev/disk instead and may be incomplete"
+LSBLK_LACKS = "FSTYPE of an unmounted filesystem is blank (with -F, that drops it), and UUID, MODEL and SERIAL come from sysfs and /dev/disk instead and may be incomplete"
 LSBLK_MISSING_NOTE = f"lsblk not found (it comes with util-linux): {LSBLK_LACKS}."
 # multiCMD's return code for a command it stopped at --timeout.
 TIMEOUT_RETURNCODE = 124
 # What is missing when --timeout stopped one of the commands statblk reads (see cut_note).
 CUT_WHAT = {
 	'diskutil': "unmounted devices may be missing, and UUID, LABEL, MODEL, SERIAL and DISCARD may be blank or N/A",
-	'mount': "mounted filesystems may be missing, with their MOUNTPOINT and FSUSE%",
+	'mount': "mounted filesystems may show no MOUNTPOINT or FSUSE%, and with -M may be missing",
 	'lsblk': LSBLK_LACKS,
 }
 _OCTAL_ESCAPE_RE = re.compile(r'\\([0-7]{3})')
@@ -1330,7 +1330,7 @@ def cut_note(command, timeout):
 	"""The stderr line for a command --timeout stopped before it finished (see CUT_WHAT).
 
 	>>> cut_note('mount', 0.5)
-	'mount was stopped by -t 0.5 before it finished: mounted filesystems may be missing, with their MOUNTPOINT and FSUSE%. A larger -t gives it longer.'
+	'mount was stopped by -t 0.5 before it finished: mounted filesystems may show no MOUNTPOINT or FSUSE%, and with -M may be missing. A larger -t gives it longer.'
 	"""
 	return f"{command} was stopped by -t {timeout:g} before it finished: {CUT_WHAT[command]}. A larger -t gives it longer."
 
@@ -1375,7 +1375,7 @@ def main():
 	parser.add_argument('-t','--timeout', help="Set command timeout in seconds (default: 2; 0: no limit)", default=2, type=float)
 	parser.add_argument('-w','--watch', metavar='SECONDS', type=float, default=None,
 						help="Repeat output every SECONDS (watch mode). Equivalent to a trailing integer positional.")
-	parser.add_argument('--check', help="Health check: print rows with a problem (SMART failing, FSUSE%% >= --max_use, hung mount; exit 1), else print nothing and exit 0. Unknown, with no problem found, is exit 3: SMART unreadable (rows printed), or a command --timeout stopped that can hide what is checked (named on stderr)", action="store_true")
+	parser.add_argument('--check', help="Health check: print rows with a problem (SMART failing, FSUSE%% >= --max_use, hung mount; exit 1), else print nothing (no rows, with -j or -J) and exit 0. Unknown, with no problem found, is exit 3: SMART unreadable (rows printed), or a command --timeout stopped that can hide what is checked (named on stderr)", action="store_true")
 	parser.add_argument('--max_use', metavar='PCT', type=int, default=90, help="FSUSE%% at or above which --check reports a filesystem (default: 90)")
 	parser.add_argument('--sudo', help="Run commands as root with sudo. Needed for querying SMART info.", action="store_true")
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")
