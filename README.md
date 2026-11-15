@@ -171,6 +171,10 @@ Uses sysfs, `/proc/self/mountinfo`, `lsblk`, and optionally `smartctl`.
 
 Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device sysfs stats). APFS snapshot nodes such as the sealed system volume (`disk3s1s1` on `/`) are listed.
 
+## Upgrading to 1.62 from 1.61
+
+- The embedded multiCMD is now 1.67. It runs whenever the installed multiCMD is older than 1.67, missing, or fails to import. Nothing statblk shows changes.
+
 ## Upgrading to 1.61 from 1.60
 
 - On macOS, `-t 0` now gives `diskutil` and `mount` no limit, as it already did for `smartctl` and `statvfs`. Before, `diskutil` got 4 s and `mount` 1 s, so a slow one left SIZE, FSTYPE, MOUNTPOINT and other columns blank.

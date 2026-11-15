@@ -9,12 +9,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize("installed_version, uses_installed", [
-    ("1.61", True),
+    ("1.67", True),
     ("1.100", True),   # float('1.100') == 1.1 would wrongly reject it
     ("2.0", True),
-    ("1.60", False),   # older than the embedded copy
-    ("1.58", False),   # what statblk 1.60 embedded
-    ("1.9", False),    # minor 9 < 61, though float('1.9') > 1.61
+    ("1.66", False),   # older than the embedded copy
+    ("1.61", False),   # what statblk 1.61 embedded
+    ("1.9", False),    # minor 9 < 67, though float('1.9') > 1.67
     ("garbage", False),
     (None, False),     # module without a version attribute
 ])
@@ -31,7 +31,7 @@ def test_installed_multicmd_used_only_if_not_older_than_embedded(tmp_path, insta
     ).stdout.split()
     assert out[0] == str(uses_installed)
     if not uses_installed:
-        assert out[1] == "1.61"  # the embedded copy
+        assert out[1] == "1.67"  # the embedded copy
 
 
 def test_embedded_multicmd_is_used_when_the_installed_one_fails_to_import(tmp_path):
@@ -42,4 +42,4 @@ def test_embedded_multicmd_is_used_when_the_installed_one_fails_to_import(tmp_pa
         [sys.executable, "-c", "import statblk; print(statblk.multiCMD.version)"],
         cwd=tmp_path, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=True,
     ).stdout.split()
-    assert out == ["1.61"]
+    assert out == ["1.67"]
