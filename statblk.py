@@ -1417,6 +1417,7 @@ def main():
 	# A terminal is redrawn in place (one write, so no flicker); piped output and JSON keep every refresh.
 	redraw = print_period > 0 and sys.stdout.isatty() and not (args.json or args.json_objects)
 	check_status = CHECK_OK
+	told = set()  # the commands whose cut note was printed
 	# --check: the column a cut command can hide. mount: the FSUSE% of the filesystems it did not list. diskutil: an
 	# unmounted disk has no SIZE, so its row goes, SMART with it. lsblk: the same for a blank FSTYPE, only with -F.
 	cut_hides = {'mount': 'FSUSE%', 'diskutil': 'SMART'}
@@ -1471,7 +1472,10 @@ def main():
 					lsblk_note = ''  # once per run, unless the next redraw wipes it
 			if sys.stderr is not None:
 				for command in cut:
-					print(cut_note(command, args.timeout), file=sys.stderr, flush=True)
+					if command not in told:
+						print(cut_note(command, args.timeout), file=sys.stderr, flush=True)
+						if not redraw:
+							told.add(command)  # once per run, unless the next redraw wipes it
 			if print_period <= 0:
 				break
 			time.sleep(print_period)

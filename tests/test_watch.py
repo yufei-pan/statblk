@@ -10,8 +10,10 @@ ROWS = [["NAME", "READ", "FSTYPE"], ["sda", "1 MiB/s", "ext4"]]
 CLEAR = "\x1b[H\x1b[J"
 
 
-def _run(monkeypatch, argv, tty=False, refreshes=2, rows=ROWS):
+def _run(monkeypatch, argv, tty=False, refreshes=2, rows=ROWS, cuts=([],)):
     """Run main() for up to `refreshes` refreshes; return (sleeps, get_drives_info kwargs).
+
+    cuts: the commands --timeout stopped at each refresh (the last item repeats).
 
     Needs capsys active so sys.stdout is the capture object whose isatty is patched.
     """
@@ -22,7 +24,12 @@ def _run(monkeypatch, argv, tty=False, refreshes=2, rows=ROWS):
         if len(sleeps) >= refreshes:
             raise KeyboardInterrupt()
 
-    monkeypatch.setattr(statblk, "get_drives_info", lambda **k: calls.append(k) or [list(r) for r in rows])
+    def gdi(**k):
+        k["cut"].extend(cuts[min(len(calls), len(cuts) - 1)])
+        calls.append(k)
+        return [list(r) for r in rows]
+
+    monkeypatch.setattr(statblk, "get_drives_info", gdi)
     monkeypatch.setattr(statblk.multiCMD, "set_sudo", lambda x: None)
     monkeypatch.setattr(statblk.multiCMD, "pretty_format_table", lambda r, **k: "TABLE")
     monkeypatch.setattr(statblk.time, "sleep", sleep)
@@ -178,3 +185,23 @@ def test_no_lsblk_note_when_stderr_is_closed(monkeypatch, capsys):
     monkeypatch.setattr(statblk.sys, "stderr", None)
     _run(monkeypatch, ["statblk", "-j"])
     json.loads(capsys.readouterr().out)
+
+
+def test_cut_note_once_per_run_when_watch_output_is_piped(monkeypatch, capsys):
+    # 1.61 printed none; a line per refresh would fill a log with the same sentence.
+    _run(monkeypatch, ["statblk", "-w", "2", "-t", "0.5"], refreshes=3, cuts=(["diskutil", "mount"],))
+    err = capsys.readouterr().err
+    assert err == statblk.cut_note("diskutil", 0.5) + "\n" + statblk.cut_note("mount", 0.5) + "\n"
+
+
+def test_cut_note_is_per_command_not_per_run_start(monkeypatch, capsys):
+    # A command first cut at a later refresh is still said once, and one cut again later is not repeated.
+    _run(monkeypatch, ["statblk", "-w", "2", "-t", "0.5"], refreshes=4, cuts=(["mount"], [], ["mount", "diskutil"], ["mount"]))
+    err = capsys.readouterr().err
+    assert err.count("mount was stopped") == 1 and err.count("diskutil was stopped") == 1
+
+
+def test_cut_note_under_every_redrawn_table(monkeypatch, capsys):
+    # The next redraw wipes the screen, so the note goes under each table, as the missing-lsblk note does.
+    _run(monkeypatch, ["statblk", "-w", "2", "-t", "0.5"], tty=True, refreshes=3, cuts=(["mount"],))
+    assert capsys.readouterr().err.count("mount was stopped") == 3
