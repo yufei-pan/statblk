@@ -126,6 +126,28 @@ def test_diskutil_and_mount_stopped_by_the_timeout_are_recorded(monkeypatch, ret
     assert cut == expected
 
 
+@pytest.mark.parametrize("returncode, expected", [(124, ["diskutil", "mount"]), (0, [])])
+def test_get_drives_info_passes_cut_to_diskutil_and_mount(monkeypatch, returncode, expected):
+    # The whole path: what main() prints and decides from comes through get_drives_info's own `cut`.
+    monkeypatch.setattr(statblk, "IS_DARWIN", True)
+    monkeypatch.setattr(statblk, "DISKUTIL_PATH", "/usr/sbin/diskutil")
+    _fake_dev_listing(monkeypatch, ["disk3", "disk3s1"])
+    monkeypatch.setattr(statblk, "is_block_device", lambda p: True)
+    monkeypatch.setattr(statblk, "get_statvfs_use_size", lambda mp, *a, **k: (1000, 350, 650))
+    monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
+
+    def fake_run_command(command, timeout=0, **kwargs):
+        if command == "mount":
+            return FakeCmdResult(DARWIN_MOUNT_SAMPLE, returncode)
+        return FakeCmdResult(DISKUTIL_INFO_ALL_SAMPLE.strip("\n").split("\n") + [""], returncode)
+
+    monkeypatch.setattr(statblk.multiCMD, "run_command", fake_run_command)
+    cut = []
+    rows = statblk.get_drives_info(output="NAME,SIZE,MOUNTPOINT", timeout=2, cut=cut)
+    assert cut == expected
+    assert [r[0] for r in rows[1:]] == ["disk3s1"]
+
+
 def test_a_silent_diskutil_and_mount_are_stopped_and_recorded(monkeypatch, tmp_path):
     # Through the real multiCMD: each prints its first line, then nothing, as a diskutil or mount stuck on a
     # device does. Their first lines are still read.
@@ -141,6 +163,8 @@ def test_a_silent_diskutil_and_mount_are_stopped_and_recorded(monkeypatch, tmp_p
     monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ.get("PATH", ""))
     cut = []
     start = time.monotonic()
+    # 0.3 s because the first line is read before the stop in 30 of 30 runs at 0.02 s (Python 3.6 and 3.11, load
+    # average 13 to 40 on 32 cores, 2026-11-15), so it is 15 times what the test needs.
     info = statblk.get_macos_diskutil_info(timeout=0.3, cut=cut)
     mounts = statblk.parseMount(0.3, cut=cut)
     assert time.monotonic() - start < 10

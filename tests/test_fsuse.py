@@ -87,9 +87,11 @@ def test_statvfs_of_a_mount_that_answers_again_is_asked_again(monkeypatch):
 
     monkeypatch.setattr(statblk.os, "statvfs", fake_statvfs)
     monkeypatch.setattr(statblk, "_HUNG_STATVFS", {})
-    assert statblk.get_statvfs_use_size("/nfs", timeout=0.1) is None
-    assert statblk.get_statvfs_use_size("/nfs", timeout=5) is None  # still stuck: not asked again
-    release.set()
+    try:
+        assert statblk.get_statvfs_use_size("/nfs", timeout=0.1) is None
+        assert statblk.get_statvfs_use_size("/nfs", timeout=5) is None  # still stuck: not asked again
+    finally:
+        release.set()  # a failed assertion must not leave the stuck thread waiting its 10 s
     deadline = time.monotonic() + 5
     usage = None
     while usage is None and time.monotonic() < deadline:

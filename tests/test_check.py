@@ -269,6 +269,15 @@ def test_table_and_json_say_which_command_was_cut(monkeypatch, capsys):
     assert captured.err == MOUNT_CUT_LINE
 
 
+@pytest.mark.parametrize("command", ["diskutil", "mount", "lsblk"])
+def test_every_command_that_can_be_cut_has_its_line(monkeypatch, capsys, command):
+    # The names get_drives_info records (see its docstring) are the keys CUT_WHAT answers for.
+    code, _ = _run_main_cut(monkeypatch, ["statblk", "-t", "0.5"], CHECK_ROWS, [command])
+    assert not code
+    assert capsys.readouterr().err == (f"{command} was stopped by -t 0.5 before it finished: "
+                                       f"{statblk.CUT_WHAT[command]}. A larger -t gives it longer.\n")
+
+
 def test_nothing_cut_says_nothing(monkeypatch, capsys):
     code, _ = _run_main_cut(monkeypatch, ["statblk", "--check"], [CHECK_ROWS[0], CHECK_ROWS[2]], [])
     assert not code
