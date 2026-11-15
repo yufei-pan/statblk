@@ -164,3 +164,69 @@ def test_check_exclude_smart_is_space_only(monkeypatch):
     code, seen, tables = _run_main(monkeypatch, ["statblk", "--check", "-x", "SMART"], rows=rows)
     assert seen["exclude"] == "SMART" and seen["output"] == "all"
     assert not code and tables == []
+
+
+def _run_main_cut(monkeypatch, argv, rows, cut):
+    """main() whose get_drives_info reports `cut` (commands --timeout stopped); return (exit value, printed tables)."""
+    tables = []
+
+    def gdi(**k):
+        k["cut"].extend(cut)
+        return [list(r) for r in rows]
+
+    monkeypatch.setattr(statblk, "get_drives_info", gdi)
+    monkeypatch.setattr(statblk.multiCMD, "set_sudo", lambda x: None)
+    monkeypatch.setattr(statblk.multiCMD, "pretty_format_table", lambda r, **k: tables.append(r) or "T")
+    monkeypatch.setattr(statblk.sys, "argv", argv)
+    return statblk.main(), tables
+
+
+MOUNT_CUT_LINE = ("mount was stopped by -t 0.5 before it finished: mounted filesystems may be missing, with their "
+                  "MOUNTPOINT and FSUSE%. A larger -t gives it longer.\n")
+DISKUTIL_CUT_LINE = ("diskutil was stopped by -t 0.5 before it finished: SIZE, FSTYPE, UUID, LABEL, MODEL, SERIAL and "
+                     "DISCARD may be blank. A larger -t gives it longer.\n")
+
+
+def test_check_with_mount_cut_is_unknown_and_says_why(monkeypatch, capsys):
+    # macOS: the filesystems a cut `mount` did not list were not checked, so healthy rows are not "healthy".
+    code, tables = _run_main_cut(monkeypatch, ["statblk", "--check", "-t", "0.5"], [CHECK_ROWS[0], CHECK_ROWS[2]],
+                                 ["mount"])
+    assert code == 3
+    assert tables == []
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == MOUNT_CUT_LINE
+
+
+def test_check_with_mount_cut_still_reports_a_problem(monkeypatch, capsys):
+    code, tables = _run_main_cut(monkeypatch, ["statblk", "--check", "-t", "0.5"], CHECK_ROWS, ["mount"])
+    assert code == 1
+    assert tables == [[CHECK_ROWS[0], CHECK_ROWS[1]]]
+    assert capsys.readouterr().err == MOUNT_CUT_LINE
+
+
+def test_check_with_diskutil_cut_says_so_and_stays_healthy(monkeypatch, capsys):
+    # diskutil fills no column --check looks at (FSUSE% comes from statvfs, SMART from smartctl).
+    code, tables = _run_main_cut(monkeypatch, ["statblk", "--check", "-t", "0.5"], [CHECK_ROWS[0], CHECK_ROWS[2]],
+                                 ["diskutil"])
+    assert not code and tables == []
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == DISKUTIL_CUT_LINE
+
+
+def test_table_and_json_say_which_command_was_cut(monkeypatch, capsys):
+    code, tables = _run_main_cut(monkeypatch, ["statblk", "-t", "0.5"], CHECK_ROWS, ["diskutil", "mount"])
+    assert not code and len(tables) == 1
+    captured = capsys.readouterr()
+    assert captured.out == "T\n"
+    assert captured.err == DISKUTIL_CUT_LINE + MOUNT_CUT_LINE
+    code, _ = _run_main_cut(monkeypatch, ["statblk", "-J", "-t", "0.5"], CHECK_ROWS, ["mount"])
+    captured = capsys.readouterr()
+    assert [o["NAME"] for o in json.loads(captured.out)] == ["sda1", "sda2"]
+    assert captured.err == MOUNT_CUT_LINE
+
+
+def test_nothing_cut_says_nothing(monkeypatch, capsys):
+    code, _ = _run_main_cut(monkeypatch, ["statblk", "--check"], [CHECK_ROWS[0], CHECK_ROWS[2]], [])
+    assert not code
+    assert capsys.readouterr() == ("", "")

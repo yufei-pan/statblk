@@ -105,7 +105,7 @@ From the second watch refresh on, READ / WRITE are **live rates**: bytes transfe
 
 | Flag | Description |
 |------|-------------|
-| `-t`, `--timeout` | Time budget per refresh in seconds for `lsblk`, `smartctl` and `statvfs`; on macOS, how long `diskutil` and `mount` may each go without output (default: 2; fractions allowed; 0: no limit) |
+| `-t`, `--timeout` | Time budget per refresh in seconds for `lsblk`, `smartctl` and `statvfs`; on macOS, how long `diskutil` and `mount` may each go without output (default: 2; fractions allowed; 0: no limit). An `lsblk`, `diskutil` or `mount` it stops is named on stderr, with what it leaves blank |
 | `-w`, `--watch SECONDS` | Repeat output every SECONDS (watch mode; fractions allowed, e.g. `0.5`) |
 | `--check` | Health check: print only problem rows and exit 1, or print nothing and exit 0 (see [Health check](#health-check)) |
 | `--max_use PCT` | FSUSE% at or above which `--check` reports a filesystem (default: 90) |
@@ -144,7 +144,7 @@ statblk -w 0 nvme0 # same via flag
 |------|---------|
 | `0` | Healthy (nothing printed). A `STANDBY` drive counts as healthy: it is checked on the next run that finds it awake |
 | `1` | Problem: `FSUSE%` at or above `--max_use` (default 90) or `TIMEOUT` (hung mount), or `SMART` reporting a failure — `FAILED!`, a vendor failure string, or `TIMEOUT` (smartctl stuck on the disk) |
-| `3` | Unknown: no problem found, but SMART couldn't be read on a disk — `NO SMARTCTL` (install smartmontools), `DENIED` (run as root or with `--sudo`) or `UNKNOWN` (no verdict, e.g. a disk behind a RAID controller) |
+| `3` | Unknown: no problem found, but SMART couldn't be read on a disk — `NO SMARTCTL` (install smartmontools), `DENIED` (run as root or with `--sudo`) or `UNKNOWN` (no verdict, e.g. a disk behind a RAID controller) — or, on macOS, `--timeout` stopped `mount`, so the filesystems it did not list were not checked (stderr says so) |
 
 A problem beats an unknown, and both kinds of rows are listed. Exit `3` exists so that "not checked" never looks like "healthy" in a sweep. For a space-only check use `-x SMART`; to skip a device that has no SMART at all (an SD card, a USB stick) filter it out, e.g. `statblk --check -D -v mmcblk`. `FSUSE%` and `SMART` are always added to the shown columns so you can see why a row failed; excluding one with `-x` turns that check off. Filters (`-M`, `-B`, patterns) and JSON output (`-j` / `-J`) work as usual, but filters narrow what is checked: `-M` and patterns skip disks with no mount of their own (md/LVM/ZFS/Ceph members, extra btrfs pool devices), so cluster sweeps should run plain `--check`. `--check` can't be combined with watch mode.
 
@@ -174,6 +174,7 @@ Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device s
 ## Upgrading to 1.62 from 1.61
 
 - The embedded multiCMD is now 1.67. It runs whenever the installed multiCMD is older than 1.67, missing, or fails to import. Nothing statblk shows changes.
+- An `lsblk` (Linux), `diskutil` or `mount` (macOS) that `--timeout` stopped is now named on stderr, after the table, with what it leaves blank, in every mode. 1.61 left those columns or rows blank without a word. In `--check`, a stopped `mount` makes a run with no problem unknown (exit 3), as the filesystems it did not list were not checked; 1.61 printed nothing and exited 0.
 - pip no longer installs multiCMD for statblk. The requirement guaranteed nothing, since statblk runs its own copy in place of an older one, and with stock pip 9 (EL7, EL8) and multiCMD 1.57 or older installed it stopped `pip3 install -U statblk` with `configparser.DuplicateOptionError`. A multiCMD installed only for statblk can stay or go.
 
 ## Upgrading to 1.61 from 1.60
