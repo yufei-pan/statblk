@@ -40,3 +40,14 @@ Approved known limitations and deferrals. Reviewers: read this first, and don't 
   decide whether `--check` judges each disk's SMART before filters and a zero size drop its row; that would also
   shrink the cut rule in `main()` to `mount` and FSUSE%, and it is the question to settle before the table is
   patched again.
+
+### `--check` can count a stopped command that hid nothing it reads
+- Kind: deferred
+- What the operator sees: a run with no problem exits 3 and names the stopped command although every checked row
+  was there, in a few combinations: a pattern (not `-D`) with any stopped command; `-v` with no pattern, or a `-D`
+  that matches no device, with a stopped `diskutil` or `mount`; `--show_zero_size_devices` with a stopped
+  `diskutil` (macOS). A larger `-t` clears it, as the line says. 1.61 exited 0 in these runs, as it did in the
+  ones where the stopped command did hide a failing disk.
+- Why: the cut rule in `main()` is a fixed table of what each command can hide; where flags make that moot, or
+  where a pattern's match depends on the missing values, it errs to "could not tell".
+- Revisit when: statblk 1.63, with the `--check` design question in the entry above.
