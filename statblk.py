@@ -273,14 +273,15 @@ LSBLK_PAIR_RE = re.compile(r'(\w+)="([^"]*)"')
 LSBLK_FIELDS = {'SIZE', 'FSTYPE', 'UUID', 'LABEL', 'MODEL', 'SERIAL'}
 # The columns the note below names (SIZE and LABEL have their own sysfs and /dev/disk sources).
 LSBLK_NOTE_FIELDS = {'FSTYPE', 'UUID', 'MODEL', 'SERIAL'}
-LSBLK_MISSING_NOTE = "lsblk not found (it comes with util-linux): FSTYPE, UUID, MODEL and SERIAL come from sysfs and /dev/disk instead and may be incomplete."
+LSBLK_LACKS = "FSTYPE of an unmounted filesystem is blank, and UUID, MODEL and SERIAL come from sysfs and /dev/disk instead and may be incomplete"
+LSBLK_MISSING_NOTE = f"lsblk not found (it comes with util-linux): {LSBLK_LACKS}."
 # multiCMD's return code for a command it stopped at --timeout.
 TIMEOUT_RETURNCODE = 124
 # What is missing when --timeout stopped one of the commands statblk reads (see cut_note).
 CUT_WHAT = {
-	'diskutil': "SIZE, FSTYPE, UUID, LABEL, MODEL, SERIAL and DISCARD may be blank",
+	'diskutil': "unmounted devices may be missing, and UUID, LABEL, MODEL, SERIAL and DISCARD may be blank or N/A",
 	'mount': "mounted filesystems may be missing, with their MOUNTPOINT and FSUSE%",
-	'lsblk': "FSTYPE, UUID, MODEL and SERIAL come from sysfs and /dev/disk instead and may be incomplete",
+	'lsblk': LSBLK_LACKS,
 }
 _OCTAL_ESCAPE_RE = re.compile(r'\\([0-7]{3})')
 _HEX_ESCAPE_RE = re.compile(rb'\\x([0-9a-fA-F]{2})')
@@ -1374,7 +1375,7 @@ def main():
 	parser.add_argument('-t','--timeout', help="Set command timeout in seconds (default: 2; 0: no limit)", default=2, type=float)
 	parser.add_argument('-w','--watch', metavar='SECONDS', type=float, default=None,
 						help="Repeat output every SECONDS (watch mode). Equivalent to a trailing integer positional.")
-	parser.add_argument('--check', help="Health check: print rows with a problem (SMART failing, FSUSE%% >= --max_use, hung mount; exit 1) or unreadable SMART, or macOS's mount cut by --timeout (exit 3), else print nothing and exit 0", action="store_true")
+	parser.add_argument('--check', help="Health check: print rows with a problem (SMART failing, FSUSE%% >= --max_use, hung mount; exit 1), else print nothing and exit 0. Unknown, with no problem found, is exit 3: SMART unreadable (rows printed), or a command --timeout stopped that can hide what is checked (named on stderr)", action="store_true")
 	parser.add_argument('--max_use', metavar='PCT', type=int, default=90, help="FSUSE%% at or above which --check reports a filesystem (default: 90)")
 	parser.add_argument('--sudo', help="Run commands as root with sudo. Needed for querying SMART info.", action="store_true")
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")

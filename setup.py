@@ -16,9 +16,7 @@ setup(
             'statblk=statblk:main',
         ],
     },
-    # No multiCMD: statblk carries its own copy (the embedded block in statblk.py) and runs it wherever an installed one is
-    # older than that copy, missing or does not import, so a requirement would guarantee nothing; and pip 9 (stock on EL7
-    # and EL8) upgrading an old multiCMD for it stopped `pip3 install -U statblk` (docs/lessons.md, 2026-11-14).
+    # No multiCMD requirement: statblk runs its own copy (docs/lessons.md, 2026-11-14).
     extras_require={
         'completion': [
             'argcomplete',
