@@ -24,7 +24,7 @@ Optional shell tab completion:
 pip install 'statblk[completion]'
 ```
 
-Requires **Python 3.6+** and the [multiCMD](https://pypi.org/project/multiCMD/) package (>= 1.56).
+Requires **Python 3.6+**. statblk carries a copy of [multiCMD](https://pypi.org/project/multiCMD/) (1.67): an installed multiCMD is used when it is at least as new, the copy otherwise.
 
 ## Quick start
 
@@ -105,9 +105,9 @@ From the second watch refresh on, READ / WRITE are **live rates**: bytes transfe
 
 | Flag | Description |
 |------|-------------|
-| `-t`, `--timeout` | Time budget per refresh in seconds for `lsblk`, `smartctl` and `statvfs`; on macOS, how long `diskutil` and `mount` may each go without output (default: 2; fractions allowed; 0: no limit) |
+| `-t`, `--timeout` | Time budget per refresh in seconds for `lsblk`, `smartctl` and `statvfs`; on macOS, how long `diskutil` and `mount` may each go without output (default: 2; fractions allowed; 0: no limit). A command it stops (`lsblk`, `diskutil`, `mount`) is named on stderr, with what it leaves missing |
 | `-w`, `--watch SECONDS` | Repeat output every SECONDS (watch mode; fractions allowed, e.g. `0.5`) |
-| `--check` | Health check: print only problem rows and exit 1, or print nothing and exit 0 (see [Health check](#health-check)) |
+| `--check` | Health check: print only the rows that need attention (exit 1 problem, 3 unknown), or print nothing (no rows, with `-j` / `-J`) and exit 0 (see [Health check](#health-check)) |
 | `--max_use PCT` | FSUSE% at or above which `--check` reports a filesystem (default: 90) |
 | `--sudo` | Run external commands via `sudo` (needed for SMART on many systems). `smartctl` is also looked up in `/usr/sbin`, `/sbin`, `/usr/local/sbin` when it isn't on `PATH` |
 | `--debug` | Print suppressed exceptions to stderr |
@@ -138,15 +138,15 @@ statblk -w 0 nvme0 # same via flag
 
 ### Health check
 
-`--check` runs once and prints only the rows that need attention; when everything is healthy it prints nothing, so cron only mails on trouble. Exit status:
+`--check` runs once and prints only the rows that need attention; when everything is healthy it prints nothing (with `-j` or `-J`, a result with no rows, as in 1.61), so cron only mails on trouble. Exit status:
 
 | Exit | Meaning |
 |------|---------|
-| `0` | Healthy (nothing printed). A `STANDBY` drive counts as healthy: it is checked on the next run that finds it awake |
+| `0` | Healthy (no rows printed). A `STANDBY` drive counts as healthy: it is checked on the next run that finds it awake |
 | `1` | Problem: `FSUSE%` at or above `--max_use` (default 90) or `TIMEOUT` (hung mount), or `SMART` reporting a failure — `FAILED!`, a vendor failure string, or `TIMEOUT` (smartctl stuck on the disk) |
-| `3` | Unknown: no problem found, but SMART couldn't be read on a disk — `NO SMARTCTL` (install smartmontools), `DENIED` (run as root or with `--sudo`) or `UNKNOWN` (no verdict, e.g. a disk behind a RAID controller) |
+| `3` | Unknown: no problem found, but SMART couldn't be read on a disk — `NO SMARTCTL` (install smartmontools), `DENIED` (run as root or with `--sudo`) or `UNKNOWN` (no verdict, e.g. a disk behind a RAID controller) — or `--timeout` stopped a command that can hide what the check reads (see below) |
 
-A problem beats an unknown, and both kinds of rows are listed. Exit `3` exists so that "not checked" never looks like "healthy" in a sweep. For a space-only check use `-x SMART`; to skip a device that has no SMART at all (an SD card, a USB stick) filter it out, e.g. `statblk --check -D -v mmcblk`. `FSUSE%` and `SMART` are always added to the shown columns so you can see why a row failed; excluding one with `-x` turns that check off. Filters (`-M`, `-B`, patterns) and JSON output (`-j` / `-J`) work as usual, but filters narrow what is checked: `-M` and patterns skip disks with no mount of their own (md/LVM/ZFS/Ceph members, extra btrfs pool devices), so cluster sweeps should run plain `--check`. `--check` can't be combined with watch mode.
+A problem beats an unknown, and both kinds of rows are listed. A command `--timeout` stopped counts when its answer decides what is checked: on macOS `mount` (FSUSE%, and with `-M` which rows are listed) and `diskutil` (which unmounted disks are listed, so not with `-M`), on Linux `lsblk` with `-F` (which unmounted disks have a filesystem, so not with `-M`); a pattern (not `-D`) makes all three count. It is named on stderr, after the rows, only when the run exits `1` or `3`. Exit `3` exists so that "not checked" never looks like "healthy" in a sweep. For a space-only check use `-x SMART`; to skip a device that has no SMART at all (an SD card, a USB stick) filter it out, e.g. `statblk --check -D -v mmcblk`. `FSUSE%` and `SMART` are always added to the shown columns so you can see why a row failed; excluding one with `-x` turns that check off. Filters (`-M`, `-B`, patterns) and JSON output (`-j` / `-J`) work as usual, but filters narrow what is checked: `-M` and patterns skip disks with no mount of their own (md/LVM/ZFS/Ceph members, extra btrfs pool devices), so cluster sweeps should run plain `--check`. A few other cases drop a disk's row and its SMART with it ([docs/limitations.md](docs/limitations.md)). `--check` can't be combined with watch mode.
 
 In every mode, Ctrl-C exits `130`, and when the reader closes the pipe before statblk has written everything (`statblk -w 2 | head`) the run ends quietly with `141` (128 + SIGPIPE).
 
@@ -169,7 +169,14 @@ Uses sysfs, `/proc/self/mountinfo`, `lsblk`, and optionally `smartctl`.
 
 ### macOS
 
-Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device sysfs stats). APFS snapshot nodes such as the sealed system volume (`disk3s1s1` on `/`) are listed.
+Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device sysfs stats). APFS snapshot nodes such as the sealed system volume (`disk3s1s1` on `/`) are listed. A disk with no mounted filesystem is not listed yet, and `--check` does not see its SMART (planned for 1.63, see [docs/limitations.md](docs/limitations.md)).
+
+## Upgrading to 1.62 from 1.61
+
+- The embedded multiCMD is now 1.67. It runs whenever the installed multiCMD is older than 1.67, missing, or fails to import. Nothing statblk shows changes.
+- A command `--timeout` stopped is now named on stderr, after the table or JSON and once per run in `-w` (under each table when it is redrawn on a terminal): `lsblk` (Linux, when FSTYPE, UUID, MODEL or SERIAL is shown, or `-F` needs FSTYPE), `diskutil` or `mount` (macOS), with what it leaves missing. 1.61 said nothing. In `--check`, one that can hide what the check reads makes a run with no problem exit 3, where 1.61 exited 0 ([Health check](#health-check) says which); a healthy run exits and prints as in 1.61, and a run that exits 1 or 3 also names each stopped command.
+- On Python 3.6 (EL7, EL8), a Ctrl-C that landed just as statblk started a filesystem's statvfs thread could hang `statblk -w` for good. It now exits 130.
+- pip no longer installs multiCMD for statblk. With pip 9 (EL7, EL8) and multiCMD 1.57 or older installed, `pip3 install -U statblk` stopped with `configparser.DuplicateOptionError`. A multiCMD installed only for statblk can stay or go.
 
 ## Upgrading to 1.61 from 1.60
 
@@ -180,17 +187,15 @@ Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device s
 - On Python 3.6 to 3.10, a Ctrl-C that stops a command just as it starts no longer crashes the Python that starts it. On 3.6 and 3.7 that crash left a core dump, which abrt or systemd-coredump then reported.
 - On Python 3.6 to 3.10, a Ctrl-C while `diskutil` or `mount` starts on macOS no longer leaves that command running after statblk ends.
 - A first Ctrl-C that lands in the few milliseconds when statblk starts `lsblk` or `smartctl` is now dropped a little more often (about 1 in 700 of those, against 1 in 1,400). Python prints "Exception ignored". Press Ctrl-C again.
-- With multiCMD 1.57 or earlier installed, pip 9 (stock on EL7 and EL8) without `--user` stops `pip3 install -U statblk` with `configparser.DuplicateOptionError`, because it upgrades dependencies too: use `pip3 install statblk==1.61`, `pip3 install -U --no-deps statblk`, or run `pip3 install -U pip` once. With `--user` it does not stop.
 
 ## Upgrading to 1.60 from 1.59
 
 - `-t 0` now waits for `lsblk` with no limit, as it already did for `smartctl`. Before, it did not wait at all, so a slow `lsblk` could leave SERIAL and other `lsblk` columns blank. With a limit, `lsblk` now gets what is left of the refresh's `--timeout`, not a fresh `--timeout` of its own.
 - The embedded multiCMD is now 1.58: no change to how commands run. The embedded copy also runs when the installed multiCMD fails to import in any way, not only when it is older or missing. multiCMD itself need not be upgraded.
-- With multiCMD 1.57 or earlier installed, pip 9 (stock on EL7 and EL8) without `--user` stops `pip3 install -U statblk` with `configparser.DuplicateOptionError`, because it upgrades dependencies too: use `pip3 install statblk==1.60`, `pip3 install -U --no-deps statblk`, or run `pip3 install -U pip` once. With `--user` it does not stop.
 
 ## Upgrading to 1.59 from 1.58
 
-- The embedded multiCMD is now 1.57. It runs whenever the installed multiCMD is older, so multiCMD itself need not be upgraded. With multiCMD 1.57 or earlier installed, pip 9 (stock on EL7 and EL8) without `--user` stops `pip3 install -U statblk` with `configparser.DuplicateOptionError`, because it upgrades dependencies too: use `pip3 install statblk==1.59`, `pip3 install -U --no-deps statblk`, or run `pip3 install -U pip` once. With `--user` it does not stop.
+- The embedded multiCMD is now 1.57. It runs whenever the installed multiCMD is older, so multiCMD itself need not be upgraded.
 - Faster command starts on Python 3.6 - 3.10, where the embedded multiCMD 1.57 imports only built-in modules in the wrapper that puts each command in its own process group (about 7 ms to 3.5 ms of CPU per command on Python 3.6.8). Nothing else about starting a command changes.
 
 ## Upgrading to 1.58 from 1.57

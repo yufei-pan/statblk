@@ -14,14 +14,40 @@ Approved known limitations and deferrals. Reviewers: read this first, and don't 
 - Revisit when: someone runs statblk that way on a host with a dying disk.
 - Approved: 2026-10-29, the user chose "Known limitation (Recommended)".
 
-### A diskutil or mount cut by `--timeout` on macOS leaves blank columns with no message
+### macOS: only the first section of each device in `diskutil info -all` is read
 - Kind: deferred
-- What the operator sees: on macOS, a `diskutil info -all` or `mount` that prints nothing for longer than `-t` is cut
-  (exit 124), and its columns (SIZE, MODEL, FSTYPE, MOUNTPOINT and others), or whole rows, come out blank, with nothing
-  on stderr and exit 0. `statblk --check` then prints nothing and exits 0, which reads as healthy. On the test Mac
-  `diskutil` is silent for 0.5 to 0.6 s of its 1 s run, so the 2 s default has about 3x room; `-t 0.5` blanks MODEL on
-  five rows (1.60 and 1.61 alike).
-- Why: `get_macos_diskutil_info` and `parseMount` read the output and ignore the exit status. Found by the 1.61 final
-  review; not this release's change (1.61 gives `mount` 2 s by default where 1.60 gave 1 s).
-- Revisit when: the next statblk release: report a 124 from either as a warning on stderr, and in `--check`.
-- Noted: 2026-11-11, from the 1.61 final review; a deferral, not asked.
+- What the operator sees: on macOS, a device that has no mounted filesystem (the internal SSD's disk0, an
+  unmounted external disk) is not listed, and `statblk --check` does not see its SMART; on every row UUID, LABEL
+  and SERIAL are blank and DISCARD is N/A. Mounted filesystems are listed as before.
+- Why: `diskutil info -all` splits each device into sections with blank lines, and statblk ended a device at
+  the first one. Seen on macOS 26.6.2, 2026-11-15; 1.61 did the same.
+- Revisit when: statblk 1.63, started right after 1.62.
+
+### `--check` can skip a disk's SMART where a row is dropped for another reason
+- Kind: deferred
+- What the operator sees: `statblk --check` reads SMART only from the rows the table keeps, so a failing disk
+  whose row is dropped passes with exit 0 and no output, with no stopped command involved, in these cases: on
+  macOS with `-o NAME,FSUSE%,SMART` (no `diskutil` runs without a column that needs it, so an unmounted disk has
+  no SIZE and its row goes); on Linux with no `lsblk` installed and `-F` (an unmounted filesystem's FSTYPE is
+  blank, so its row goes); on macOS with `-A` (throughput is always 0 there, so every device counts as idle); a
+  device whose SIZE reads 0 (unless `--show_zero_size_devices`). A stopped `mount` does the same on macOS without
+  `-M` when only SMART is checked (`-x FSUSE%`): a mounted filesystem it did not list keeps its row only if
+  `diskutil` gave the device a SIZE (and, with `-F`, an FSTYPE), which today it never does (the entry above), and
+  with `-o` naming no `diskutil` column it cannot.
+- Why: a filter or a missing value that drops a row takes its SMART with it. Reproduced in 1.62's reviews with the
+  real `main()` and fake commands, not on a failing disk; 1.61 did the same.
+- Revisit when: statblk 1.63, started right after 1.62, together with the `diskutil` parser above. The plan is to
+  decide whether `--check` judges each disk's SMART before filters and a zero size drop its row; that would also
+  shrink the cut rule in `main()` to `mount` and FSUSE%, and it is the question to settle before the table is
+  patched again.
+
+### `--check` can count a stopped command that hid nothing it reads
+- Kind: deferred
+- What the operator sees: a run with no problem exits 3 and names the stopped command although every checked row
+  was there, in a few combinations: a pattern (not `-D`) with any stopped command; `-v` with no pattern, or a `-D`
+  that matches no device, with a stopped `diskutil` or `mount`; `--show_zero_size_devices` with a stopped
+  `diskutil` (macOS). A larger `-t` clears it, as the line says. 1.61 exited 0 in these runs, as it did in the
+  ones where the stopped command did hide a failing disk.
+- Why: the cut rule in `main()` is a fixed table of what each command can hide; where flags make that moot, or
+  where a pattern's match depends on the missing values, it errs to "could not tell".
+- Revisit when: statblk 1.63, with the `--check` design question in the entry above.

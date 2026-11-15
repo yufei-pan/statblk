@@ -16,9 +16,7 @@ setup(
             'statblk=statblk:main',
         ],
     },
-    install_requires=[
-        'multiCMD>=1.56',
-    ],
+    # No multiCMD requirement: statblk runs its own copy (docs/lessons.md, 2026-11-14).
     extras_require={
         'completion': [
             'argcomplete',
