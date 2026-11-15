@@ -175,6 +175,7 @@ Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device s
 
 - The embedded multiCMD is now 1.67. It runs whenever the installed multiCMD is older than 1.67, missing, or fails to import. Nothing statblk shows changes.
 - An `lsblk` (Linux), `diskutil` or `mount` (macOS) that `--timeout` stopped is now named on stderr, after the table, with what it leaves blank, in every mode. 1.61 left those columns or rows blank without a word. In `--check`, a stopped `mount` makes a run with no problem unknown (exit 3), as the filesystems it did not list were not checked; 1.61 printed nothing and exited 0.
+- On Python 3.6 (stock on EL7 and EL8), a Ctrl-C that lands just as statblk starts a filesystem's statvfs thread no longer leaves it hung for good instead of exiting 130 (only Ctrl-\ or kill ended it). The thread now starts the way multiCMD 1.60 starts its own.
 - pip no longer installs multiCMD for statblk. The requirement guaranteed nothing, since statblk runs its own copy in place of an older one, and with stock pip 9 (EL7, EL8) and multiCMD 1.57 or older installed it stopped `pip3 install -U statblk` with `configparser.DuplicateOptionError`. A multiCMD installed only for statblk can stay or go.
 
 ## Upgrading to 1.61 from 1.60
