@@ -14,31 +14,12 @@ Approved known limitations and deferrals. Reviewers: read this first, and don't 
 - Revisit when: someone runs statblk that way on a host with a dying disk.
 - Approved: 2026-10-29, the user chose "Known limitation (Recommended)".
 
-### `--check` can skip a disk's SMART where a row is dropped for another reason
+### `--check` skips the SMART of a disk whose size reads zero
 - Kind: deferred
-- What the operator sees: `statblk --check` reads SMART only from the rows the table keeps, so a failing disk
-  whose row is dropped passes with exit 0 and no output, with no stopped command involved, in these cases: on
-  macOS with `-o NAME,FSUSE%,SMART` (no `diskutil` runs without a column that needs it, so an unmounted disk has
-  no SIZE and its row goes); on Linux with no `lsblk` installed and `-F` (an unmounted filesystem's FSTYPE is
-  blank, so its row goes); on macOS with `-A` (throughput is always 0 there, so every device counts as idle); a
-  device whose SIZE reads 0 (unless `--show_zero_size_devices`). A stopped `mount` does the same on macOS without
-  `-M` when only SMART is checked (`-x FSUSE%`): a mounted filesystem it did not list keeps its row only if
-  `diskutil` gave the device a SIZE (and, with `-F`, an FSTYPE), and with `-o` naming no `diskutil` column it
-  cannot.
-- Why: a filter or a missing value that drops a row takes its SMART with it. Reproduced in 1.62's reviews with the
-  real `main()` and fake commands, not on a failing disk; 1.61 did the same.
-- Revisit when: statblk 1.63, started right after 1.62, after the `diskutil` parser (read every section). The plan is to
-  decide whether `--check` judges each disk's SMART before filters and a zero size drop its row; that would also
-  shrink the cut rule in `main()` to `mount` and FSUSE%, and it is the question to settle before the table is
-  patched again.
-
-### `--check` can count a stopped command that hid nothing it reads
-- Kind: deferred
-- What the operator sees: a run with no problem exits 3 and names the stopped command although every checked row
-  was there, in a few combinations: a pattern (not `-D`) with any stopped command; `-v` with no pattern, or a `-D`
-  that matches no device, with a stopped `diskutil` or `mount`; `--show_zero_size_devices` with a stopped
-  `diskutil` (macOS). A larger `-t` clears it, as the line says. 1.61 exited 0 in these runs, as it did in the
-  ones where the stopped command did hide a failing disk.
-- Why: the cut rule in `main()` is a fixed table of what each command can hide; where flags make that moot, or
-  where a pattern's match depends on the missing values, it errs to "could not tell".
-- Revisit when: statblk 1.63, with the `--check` design question in the entry above.
+- What the operator sees: a device whose size reads 0 is hidden unless `--show_zero_size_devices`, so a plain
+  `statblk --check` does not judge its SMART, and a failing disk that reports zero size passes with exit 0 and no
+  output. `statblk --check --show_zero_size_devices` judges it. 1.63 narrowed this entry to that case: a value
+  statblk could not read no longer drops a row.
+- Why: statblk hides zero-size devices (an empty card-reader slot, empty virtual media) by default. Reproduced with
+  fake commands only, not on a real disk; 1.62 and 1.61 did the same.
+- Revisit when: the user's answer to the zero-size question (docs/progress.md, questions).

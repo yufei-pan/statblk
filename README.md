@@ -93,10 +93,10 @@ From the second watch refresh on, READ / WRITE are **live rates**: bytes transfe
 | `filter_patterns …` | Show rows matching any pattern (regex) |
 | `-D`, `--match_devname_only` | Apply patterns to device names only (kernel name or `/dev/mapper` name) |
 | `-v`, `--invert_match` | Invert pattern match (with no patterns, prints only the header) |
-| `-F`, `-fo`, `--formated_only` | Only entries with a filesystem type |
+| `-F`, `-fo`, `--formated_only` | Only entries with a filesystem type (one whose type could not be read stays, `FSTYPE` blank) |
 | `-M`, `-mo`, `--mounted_only` | Only mounted devices |
 | `-B`, `-bo`, `--best_only` | Shortest mount point per device |
-| `-A`, `-ao`, `--active_only` | Only devices with read/write activity (since boot on the first query, during the last interval on later watch refreshes) |
+| `-A`, `-ao`, `--active_only` | Only devices with read/write activity (since boot on the first query, during the last interval on later watch refreshes); on macOS, which has no throughput to read, it filters nothing |
 | `-P`, `--pseudo` | Include pseudo filesystems (tmpfs, nfs, cifs, …) |
 | `--show_zero_size_devices` | Include zero-size devices |
 | `--show_squashfs` | Include squashfs images on loop devices (snaps, AppImages), hidden by default |
@@ -127,7 +127,7 @@ statblk -w 3 sda   # same with explicit flag (flag wins if both are given)
 
 Each table refresh starts with a `watch(1)`-style header, `Every 2s on <hostname>: <date time>`. On a terminal the screen is redrawn in place; when output is piped or redirected every refresh is kept, so the log reads top to bottom. With `-j` / `-J`, watch mode prints one compact JSON document per line (NDJSON) so a reader can parse each refresh as it arrives; single-run JSON stays indented.
 
-The first table shows each device's since-boot READ / WRITE average and later refreshes show live rates (see [READ / WRITE numbers](#read--write-numbers)). After the first refresh, `--active_only` is enabled automatically on Linux so only busy devices are shown, unless you gave filter patterns: devices you named stay on screen even while idle (not on macOS, where throughput isn't available; `-A` still forces it). Each refresh re-reads mounts, labels, UUIDs, sizes, and per-drive sysfs info such as model/serial, so hot-swapped drives show up correctly (throughput iterators stay live across refreshes). Press Ctrl-C to stop (exit status 130).
+The first table shows each device's since-boot READ / WRITE average and later refreshes show live rates (see [READ / WRITE numbers](#read--write-numbers)). After the first refresh, `--active_only` is enabled automatically so only busy devices are shown (it filters nothing on macOS, which has no throughput to read), unless you gave filter patterns: devices you named stay on screen even while idle. Each refresh re-reads mounts, labels, UUIDs, sizes, and per-drive sysfs info such as model/serial, so hot-swapped drives show up correctly (throughput iterators stay live across refreshes). Press Ctrl-C to stop (exit status 130).
 
 If a filter pattern looks like a number, append `0` so it is not treated as the refresh interval (or use `-w` and keep the number as a filter):
 
@@ -146,7 +146,7 @@ statblk -w 0 nvme0 # same via flag
 | `1` | Problem: `FSUSE%` at or above `--max_use` (default 90) or `TIMEOUT` (hung mount), or `SMART` reporting a failure — `FAILED!`, a vendor failure string, or `TIMEOUT` (smartctl stuck on the disk) |
 | `3` | Unknown: no problem found, but SMART couldn't be read on a disk — `NO SMARTCTL` (install smartmontools), `DENIED` (run as root or with `--sudo`) or `UNKNOWN` (no verdict, e.g. a disk behind a RAID controller) — or `--timeout` stopped a command that can hide what the check reads (see below) |
 
-A problem beats an unknown, and both kinds of rows are listed. A command `--timeout` stopped counts when its answer decides what is checked: on macOS `mount` (FSUSE%, and with `-M` which rows are listed) and `diskutil` (which unmounted disks are listed, so not with `-M`), on Linux `lsblk` with `-F` (which unmounted disks have a filesystem, so not with `-M`); a pattern (not `-D`) makes all three count. It is named on stderr, after the rows, only when the run exits `1` or `3`. Exit `3` exists so that "not checked" never looks like "healthy" in a sweep. For a space-only check use `-x SMART`; to skip a device that has no SMART at all (an SD card, a USB stick) filter it out, e.g. `statblk --check -D -v mmcblk`. `FSUSE%` and `SMART` are always added to the shown columns so you can see why a row failed; excluding one with `-x` turns that check off. Filters (`-M`, `-B`, patterns) and JSON output (`-j` / `-J`) work as usual, but filters narrow what is checked: `-M` and patterns skip disks with no mount of their own (md/LVM/ZFS/Ceph members, extra btrfs pool devices), so cluster sweeps should run plain `--check`. A few other cases drop a disk's row and its SMART with it ([docs/limitations.md](docs/limitations.md)). `--check` can't be combined with watch mode.
+A problem beats an unknown, and both kinds of rows are listed. A command `--timeout` stopped counts only when the check depends on it: `mount` on macOS (FSUSE%, and with `-M` which disks are mounted), or any command when a pattern (not `-D`) filters the rows. It is named on stderr, after the rows, only when the run exits `1` or `3`. Exit `3` exists so that "not checked" never looks like "healthy" in a sweep. For a space-only check use `-x SMART`; to skip a device that has no SMART at all (an SD card, a USB stick) filter it out, e.g. `statblk --check -D -v mmcblk`. `FSUSE%` and `SMART` are always added to the shown columns so you can see why a row failed; excluding one with `-x` turns that check off. Filters (`-M`, `-B`, patterns) and JSON output (`-j` / `-J`) work as usual, but filters narrow what is checked: `-M` and patterns skip disks with no mount of their own (md/LVM/ZFS/Ceph members, extra btrfs pool devices), so cluster sweeps should run plain `--check`. A disk whose size reads zero is hidden, and so not checked, unless `--show_zero_size_devices` ([docs/limitations.md](docs/limitations.md)). `--check` can't be combined with watch mode.
 
 In every mode, Ctrl-C exits `130`, and when the reader closes the pipe before statblk has written everything (`statblk -w 2 | head`) the run ends quietly with `141` (128 + SIGPIPE).
 
@@ -169,7 +169,14 @@ Uses sysfs, `/proc/self/mountinfo`, `lsblk`, and optionally `smartctl`.
 
 ### macOS
 
-Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device sysfs stats). APFS snapshot nodes such as the sealed system volume (`disk3s1s1` on `/`) are listed. Every device is listed, mounted or not.
+Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device sysfs stats), so `-A` filters nothing. APFS snapshot nodes such as the sealed system volume (`disk3s1s1` on `/`) are listed. Every device is listed, mounted or not.
+
+## Upgrading to 1.63 from 1.62
+
+- macOS: every device is listed, mounted or not, with its SIZE, FSTYPE, UUID, LABEL and DISCARD from `diskutil`. On macOS 26, 1.62 read only the first of the sections `diskutil info -all` prints for each device, so a disk with no mounted filesystem (such as the internal SSD's `disk0`) was not listed, and `--check` did not see its SMART.
+- A row is no longer dropped on a value statblk could not read. On macOS, a device `diskutil` gave no size (stopped by `--timeout`, or not run because no shown column needs it) is listed with SIZE blank; a size read as 0 still hides it. `-F` keeps a device whose filesystem type could not be read (no `lsblk`, or a stopped `lsblk`, `diskutil` or `mount`), with FSTYPE blank. On macOS `-A` filters nothing (1.62 listed no device).
+- `--check`: a failing disk 1.62 hid that way is reported (exit 1, where 1.62 gave 0 or 3). A stopped `diskutil`, or a stopped `lsblk` with `-F`, no longer turns a healthy run unknown: it exits 0 and prints nothing, where 1.62 exited 3. A stopped `mount` on macOS, and any stopped command with a pattern (not `-D`), still count as before.
+- The stderr notes for a stopped `diskutil` and for a missing or stopped `lsblk` say what is left blank.
 
 ## Upgrading to 1.62 from 1.61
 
