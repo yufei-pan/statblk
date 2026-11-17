@@ -598,6 +598,20 @@ def test_formated_only_runs_lsblk_without_lsblk_columns(monkeypatch):
     assert rows == [["NAME", "MOUNTPOINT"], ["sda1", ""]]
 
 
+@pytest.mark.parametrize("result, kept", [
+    (FakeCmdResult(_FORMATTED_AND_BLANK_LSBLK, 0), ["sda1"]),  # lsblk answered: sda2 has no filesystem
+    (FakeCmdResult([], returncode=124), ["sda1", "sda2"]),  # stopped at --timeout
+    (FakeCmdResult([], returncode=None, alive=True), ["sda1", "sda2"]),  # still running at the deadline
+    (FakeCmdResult([], returncode=127), ["sda1", "sda2"]),  # no lsblk installed
+])
+def test_formated_only_drops_only_a_type_read_as_blank(monkeypatch, result, kept):
+    # An unmounted device's FSTYPE comes only from lsblk: one that did not answer in full read no type, not "none".
+    _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/sda2"], mounts=defaultdict(list))
+    _patch_multicmd(monkeypatch, result)
+    rows = statblk.get_drives_info(output="NAME,FSTYPE", formated_only=True, timeout=2)
+    assert [r[0] for r in rows[1:]] == kept
+
+
 def _hardware_and_virtual(tmp_path, monkeypatch):
     make_sysfs_block(tmp_path, "sda", size_sectors=1)  # physical: has device/
     make_sysfs_block(tmp_path, "loop0", size_sectors=1, with_device=False)

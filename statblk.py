@@ -273,13 +273,13 @@ LSBLK_PAIR_RE = re.compile(r'(\w+)="([^"]*)"')
 LSBLK_FIELDS = {'SIZE', 'FSTYPE', 'UUID', 'LABEL', 'MODEL', 'SERIAL'}
 # The columns the note below names (SIZE and LABEL have their own sysfs and /dev/disk sources).
 LSBLK_NOTE_FIELDS = {'FSTYPE', 'UUID', 'MODEL', 'SERIAL'}
-LSBLK_LACKS = "FSTYPE of an unmounted filesystem is blank (with -F, that drops it), and UUID, MODEL and SERIAL come from sysfs and /dev/disk instead and may be incomplete"
+LSBLK_LACKS = "FSTYPE of an unmounted filesystem is blank (-F keeps it), and UUID, MODEL and SERIAL come from sysfs and /dev/disk instead and may be incomplete"
 LSBLK_MISSING_NOTE = f"lsblk not found (it comes with util-linux): {LSBLK_LACKS}."
 # multiCMD's return code for a command it stopped at --timeout.
 TIMEOUT_RETURNCODE = 124
 # What is missing when --timeout stopped one of the commands statblk reads (see cut_note).
 CUT_WHAT = {
-	'diskutil': "unmounted devices may be missing, and UUID, LABEL, MODEL, SERIAL and DISCARD may be blank or N/A",
+	'diskutil': "an unmounted device may have no SIZE or FSTYPE, and UUID, LABEL, MODEL, SERIAL and DISCARD may be blank or N/A",
 	'mount': "mounted filesystems may be missing, or listed with no MOUNTPOINT or FSUSE%",
 	'lsblk': LSBLK_LACKS,
 }
@@ -1038,14 +1038,22 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 					filter_patterns=None,invert_match=False,match_devname_only=False,timeout=None,
 					debug=False,cut=None):
 	"""Rows of the table, header first. cut: a list that gets the name of each command whose answer the timeout
-	cut short ('diskutil', 'mount', 'lsblk'; see CUT_WHAT)."""
+	cut short ('diskutil', 'mount', 'lsblk'; see CUT_WHAT).
+
+	A filter drops a row only on a value that was read: a SIZE diskutil did not give is not a zero size, a blank
+	FSTYPE whose source did not answer in full is not "no filesystem", and macOS throughput, which is never read, is
+	not idle. Such a row stays, its cell blank."""
 	global _DEBUG_MODE
 	if debug:
 		_DEBUG_MODE = True
 	# None (the default for library callers) means no limit, as 0 does; multiCMD takes only a number.
 	timeout = timeout or 0
+	if cut is None:
+		cut = []
 	if tptDict is None:
 		tptDict = {}
+	# macOS has no per-device throughput (READ and WRITE show 0), so -A drops nothing there.
+	active_only = active_only and not IS_DARWIN
 	# One deadline for the whole refresh: a smartctl stuck in D-state on a dying
 	# disk can't be killed, so waiting `timeout` per partition would add up.
 	deadline = time.monotonic() + timeout if timeout else None
@@ -1109,12 +1117,15 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	size_dict = {}
 	model_dict = {}
 	serial_dict = {}
+	# Whether a blank FSTYPE of an unmounted device was read (its source answered in full), so -F may drop it.
+	fstype_answered = IS_DARWIN and 'diskutil' not in cut and 'mount' not in cut
 	if (not IS_DARWIN) and LSBLK_FIELDS.intersection(collect_fields):
 		lsblk_result.thread.join(_remaining(deadline))
 		if lsblk_result.returncode == 0:
+			fstype_answered = True
 			populate_lsblk_dicts(lsblk_result.stdout, collect_fields, uuid_dict, fstype_dict, label_dict, size_dict,
 								model_dict=model_dict, serial_dict=serial_dict)
-		elif cut is not None and LSBLK_NOTE_FIELDS.intersection(collect_fields) and (
+		elif LSBLK_NOTE_FIELDS.intersection(collect_fields) and (
 				lsblk_result.returncode == TIMEOUT_RETURNCODE or lsblk_result.thread.is_alive()):
 			# stopped at --timeout, or still running when the refresh's deadline came
 			cut.append('lsblk')
@@ -1126,8 +1137,6 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 				fstype_dict[devname] = info['FSTYPE']
 			if 'LABEL' in output_fields_set and info.get('LABEL'):
 				label_dict[devname] = info['LABEL']
-			if 'SIZE' in output_fields_set and info.get('SIZE_BYTES'):
-				size_dict[devname] = info['SIZE_BYTES']
 	for device_name in target_devices:
 		if mounted_only and device_name not in mount_table:
 			continue
@@ -1215,17 +1224,19 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			device_properties['FSTYPE'] = fstype_dict.get(device_name, '')
 			# fstype_dict only holds non-empty types. Squashfs hiding is best effort
 			# here: it is only filled when FSTYPE is collected (an output column or -F).
-			if not keep_fstype(device_name, device_properties['FSTYPE'], formated_only, show_squashfs):
+			fstype_read = fstype_answered and (not IS_DARWIN or device_name in macos_info)
+			if not keep_fstype(device_name, device_properties['FSTYPE'], formated_only and fstype_read, show_squashfs):
 				continue
 			if IS_DARWIN:
-				size_bytes = size_dict.get(device_name, macos_info.get(device_name, {}).get('SIZE_BYTES') or 0)
+				# None: diskutil did not run, was stopped before this device, or gave it no size.
+				size_bytes = macos_info.get(device_name, {}).get('SIZE_BYTES')
 			else:
 				size_bytes = size_dict.get(device_name)
 				if size_bytes is None:
 					size_bytes = read_size(os.path.join('/sys/class/block', os.path.basename(device_name)))
 			if size_bytes == 0 and not show_zero_size_devices:
 				continue
-			device_properties['SIZE'] = format_size(size_bytes, print_bytes, use_1024)
+			device_properties['SIZE'] = '' if size_bytes is None else format_size(size_bytes, print_bytes, use_1024)
 			output_list.append([device_properties[output_field] for output_field in output_fields])
 	if filter_patterns and not match_devname_only:
 		output_list = filter_rows(output_list, filter_patterns, invert_match)
@@ -1488,9 +1499,8 @@ def main():
 			if print_period <= 0:
 				break
 			time.sleep(print_period)
-			# Throughput is always 0 on macOS, so active_only would hide every row.
 			# Devices named by filter patterns stay on screen even while idle.
-			if not IS_DARWIN and not args.filter_patterns:
+			if not args.filter_patterns:
 				args.active_only = True
 	except KeyboardInterrupt:
 		return 130

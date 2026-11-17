@@ -98,7 +98,7 @@ def _sleep_once_then_interrupt():
 @pytest.mark.parametrize("darwin, argv, expected", [
     (False, ["statblk", "-w", "1"], [False, True]),  # Linux: auto-enable after first refresh
     (False, ["statblk", "1"], [False, True]),  # trailing interval is not a pattern
-    (True, ["statblk", "-w", "1"], [False, False]),  # macOS: no throughput data, so never auto-enable
+    (True, ["statblk", "-w", "1"], [False, True]),  # macOS too: get_drives_info drops nothing for it there
     (False, ["statblk", "-w", "1", "sda"], [False, False]),  # named devices stay on screen
     (False, ["statblk", "sda", "1"], [False, False]),
     (False, ["statblk", "-w", "1", "-A", "sda"], [True, True]),  # explicit -A still applies

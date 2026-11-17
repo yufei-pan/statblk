@@ -183,8 +183,9 @@ def _run_main_cut(monkeypatch, argv, rows, cut):
 
 MOUNT_CUT_LINE = ("mount was stopped by -t 0.5 before it finished: mounted filesystems may be missing, or listed "
                   "with no MOUNTPOINT or FSUSE%. A larger -t gives it longer.\n")
-DISKUTIL_CUT_LINE = ("diskutil was stopped by -t 0.5 before it finished: unmounted devices may be missing, and UUID, "
-                     "LABEL, MODEL, SERIAL and DISCARD may be blank or N/A. A larger -t gives it longer.\n")
+DISKUTIL_CUT_LINE = ("diskutil was stopped by -t 0.5 before it finished: an unmounted device may have no SIZE or "
+                     "FSTYPE, and UUID, LABEL, MODEL, SERIAL and DISCARD may be blank or N/A. A larger -t gives it "
+                     "longer.\n")
 
 
 def test_check_with_mount_cut_is_unknown_and_says_why(monkeypatch, capsys):
