@@ -9,7 +9,7 @@ Open work lives here and nowhere else (RULES, "Long work: the progress file"). E
 
 ### statblk 1.64 (no written plan yet: the entries of kind "deferred (1.64)" in docs/limitations.md, written in 1.63's fix round; next, after 1.63's release on 2026-11-17)
 - **The 1.63 reviews' deferrals,** each with its plan in docs/limitations.md (a mount or lsblk that fails without being stopped recorded as not answered in full; `-F` with no lsblk says so; macOS APFS type case; `Volume Total Space`; Linux `-F` per device; an unreadable sysfs stat or size; Linux `-A` with `-P`; a macOS mount source with a space; macOS READ/WRITE never read; the Mac test's margin). State: not started. From: 1.63's final review and second opinions (2026-11-16), deferrals, not asked.
-- **The embedded multiCMD 1.68** (released 2026-11-17, tag v1.68). State: not started; the 1.64 build starts after account d's 5-hour window resets (03:10 PST, 2026-11-17), behind the releases in flight.
+- **The embedded multiCMD 1.68** (released 2026-11-17, tag v1.68). State: not started; held behind the releases in flight (hpcp 9.96, multiSSH3 6.47) for account d's week budget (chief's decision C65: no new agent once d's week reads 60%, until Fri 2026-11-20 12:00 PST; d read 28% at 03:11 on 2026-11-17, about 5 points an hour at full speed).
 - **The `--check` help's two loose clauses** (exit 1 also prints the unknown rows; a healthy `-j` prints the header row, `-J` prints `[]`): one-line fix. State: not started. From: 1.63's re-review second opinion (docsA 12), a deferral.
 
 ### Standing rows
