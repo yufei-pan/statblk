@@ -1431,18 +1431,14 @@ def main():
 	redraw = print_period > 0 and sys.stdout.isatty() and not (args.json or args.json_objects)
 	check_status = CHECK_OK
 	told = set()  # the commands whose cut note was printed
-	# --check: the checked columns a cut command can hide, by blanking a cell it fills (mount: FSUSE%) or by dropping a
-	# row it decides, with the row's columns. mount decides which filesystems are mounted, so with -M the mounted rows
-	# (FSUSE% and SMART); diskutil's SIZE and, with -F, lsblk's FSTYPE decide the unmounted rows, which have no FSUSE%
-	# and which -M drops anyway. A pattern (not -D) matches what all three fill, so it makes each decide every row.
+	# --check: the checked columns a command --timeout stopped can hide. A filter drops a row only on a value that was
+	# read (get_drives_info), so a stopped command hides a check only where its answer is the check's input: mount lists
+	# the mounted filesystems (their FSUSE%, and with -M the rows), and a pattern (not -D) matches any cell it fills.
 	patterns = bool(args.filter_patterns) and not args.match_devname_only
-	def when(condition, columns):
-		return set(columns) if condition else set()
-	cut_hides = {
-		'mount': {'FSUSE%'} | when(args.mounted_only or patterns, CHECK_FIELDS),
-		'diskutil': when(patterns, CHECK_FIELDS) | when(not args.mounted_only, ['SMART']),
-		'lsblk': when(patterns, CHECK_FIELDS) | when(args.formated_only and not args.mounted_only, ['SMART']),
-	}
+	def cut_hides(command):
+		if patterns or (command == 'mount' and args.mounted_only):
+			return set(CHECK_FIELDS)
+		return {'FSUSE%'} if command == 'mount' else set()
 	try:
 		while True:
 			cut = []
@@ -1460,7 +1456,7 @@ def main():
 				results, check_status = check_rows(results, args.max_use)
 				if check_status == CHECK_OK:
 					# A cut that can hide what --check reads makes the run unknown; any other cut stays quiet.
-					if any(cut_hides[command].intersection(read) for command in cut):
+					if any(cut_hides(command).intersection(read) for command in cut):
 						check_status = CHECK_UNKNOWN
 					else:
 						cut = []
