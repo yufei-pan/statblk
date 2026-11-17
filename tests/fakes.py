@@ -43,17 +43,18 @@ DARWIN_MOUNT_SAMPLE = [
     "/dev/disk3s1 on / (apfs, local, journaled)",
 ]
 
-DISKUTIL_INFO_ALL_SAMPLE = """
-Device Node:               /dev/disk3s1
-Device / Media Name:       FakeSSD
-Serial Number:             SN123
-File System Personality:   APFS
-Volume Name:               Macintosh HD
-Volume UUID:               VOL-UUID
-Disk Size:                 100.0 GB (107374182400 Bytes)
-Solid State:               Yes
+def load_macos26():
+    """The test Mac's own `ls /dev`, `mount` and `diskutil info -all` (macOS 26.6.2, Apple silicon, 2026-11-16), with
+    its UUIDs, volume names and OS snapshot hash replaced: (/dev/disk* nodes, mount lines, diskutil lines). 20 devices:
+    disk0 is the physical SSD (no filesystem), disk3 the APFS container whose volumes hold / and the data."""
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "macos26.txt"), encoding="utf-8") as f:
+        raw = f.read()
+    dev, rest = raw.split("---DEV\n", 1)[1].split("---MOUNT\n", 1)
+    mount, diskutil = rest.split("---DISKUTIL\n", 1)
+    return ["/dev/" + name for name in dev.split()], mount.splitlines(), diskutil.splitlines()
 
-"""
+
+MACOS26_DEV, MACOS26_MOUNT, MACOS26_DISKUTIL = load_macos26()
 
 
 def make_sysfs_block(

@@ -251,10 +251,10 @@ PK(3e0G%Vs7pio1c66)QB"pE/h@ja9XUe^=%.fgD%`71d6,o<-(ALVd*R_R%%Dd.TjMA9*K'Qm=K%Hg2
 F5nLMPY&>'FbO!:2EM(Le5;O8_651INa^6B;&8O+f/_4tu>n[>mknaYOAO5e]li*2<e44uIlM"?6p'''
 	exec(zlib.decompress(base64.a85decode(_SRC_B85)).decode("utf-8"), multiCMD.__dict__)
 
-version = '1.62'
+version = '1.63'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2026-11-15'
+COMMIT_DATE = '2026-11-17'
 
 # smartmontools installs into sbin, which non-root PATHs often omit (e.g. Debian),
 # yet `--sudo` exists exactly for non-root users who want SMART.
@@ -273,13 +273,13 @@ LSBLK_PAIR_RE = re.compile(r'(\w+)="([^"]*)"')
 LSBLK_FIELDS = {'SIZE', 'FSTYPE', 'UUID', 'LABEL', 'MODEL', 'SERIAL'}
 # The columns the note below names (SIZE and LABEL have their own sysfs and /dev/disk sources).
 LSBLK_NOTE_FIELDS = {'FSTYPE', 'UUID', 'MODEL', 'SERIAL'}
-LSBLK_LACKS = "FSTYPE of an unmounted filesystem is blank (with -F, that drops it), and UUID, MODEL and SERIAL come from sysfs and /dev/disk instead and may be incomplete"
+LSBLK_LACKS = "FSTYPE of an unmounted filesystem is blank (-F keeps it), and UUID, MODEL and SERIAL come from sysfs and /dev/disk instead and may be incomplete"
 LSBLK_MISSING_NOTE = f"lsblk not found (it comes with util-linux): {LSBLK_LACKS}."
 # multiCMD's return code for a command it stopped at --timeout.
 TIMEOUT_RETURNCODE = 124
 # What is missing when --timeout stopped one of the commands statblk reads (see cut_note).
 CUT_WHAT = {
-	'diskutil': "unmounted devices may be missing, and UUID, LABEL, MODEL, SERIAL and DISCARD may be blank or N/A",
+	'diskutil': "an unmounted device may have no SIZE or FSTYPE, and UUID, LABEL, MODEL, SERIAL and DISCARD may be blank or N/A",
 	'mount': "mounted filesystems may be missing, or listed with no MOUNTPOINT or FSUSE%",
 	'lsblk': LSBLK_LACKS,
 }
@@ -423,77 +423,87 @@ def build_symlink_dict(dir_path):
 	return mapping
 
 def parse_bytes_from_diskutil_size(value):
-	"""Extract byte size from diskutil size strings.
+	"""Byte count from a diskutil size line, or None when it gives none.
 
-	>>> parse_bytes_from_diskutil_size('100.0 GB (107374182400 Bytes)')
-	107374182400
-	>>> parse_bytes_from_diskutil_size('')
+	>>> parse_bytes_from_diskutil_size('500.3 GB (500277792768 Bytes) (exactly 977105064 512-Byte-Units)')
+	500277792768
+	>>> parse_bytes_from_diskutil_size('0 B (0 Bytes) (exactly 0 512-Byte-Units)')
 	0
-	>>> parse_bytes_from_diskutil_size('no bytes here')
-	0
+	>>> parse_bytes_from_diskutil_size('') is None, parse_bytes_from_diskutil_size('no bytes here') is None
+	(True, True)
 	"""
-	if not value:
-		return 0
-	match = re.search(r"\((\d+)\s+Bytes\)", value)
-	if match:
-		try:
-			return int(match.group(1))
-		except Exception:
-			return 0
-	return 0
+	match = re.search(r"\((\d+)\s+Bytes\)", value or "")
+	return int(match.group(1)) if match else None
 
-def get_macos_diskutil_info(timeout=0, cut=None):
+def get_macos_diskutil_info(timeout=0, cut=None, failed=None):
 	"""
 	Build map: /dev/diskXsY -> info from `diskutil info -all`.
 	Only used on macOS. timeout: seconds without output before diskutil is stopped (0: no limit).
 	cut: a list that gets 'diskutil' when the timeout stopped it (what it printed before is still read).
+	failed: a list that gets 'diskutil' when it exited with an error and was not stopped (what it printed is still
+	read, but it may have ended in the middle of a device).
 	"""
 	if not IS_DARWIN or not DISKUTIL_PATH:
 		return {}
 	info_map = {}
-	current = {}
 	task = multiCMD.run_command(f"{DISKUTIL_PATH} info -all", timeout=timeout, quiet=True, return_object=True)
-	if task.returncode == TIMEOUT_RETURNCODE and cut is not None:
-		cut.append('diskutil')
-	for raw_line in task.stdout + [""]:
-		line = raw_line.rstrip("\n")
-		if not line.strip():
-			devnode = current.get("Device Node", "").strip()
-			if devnode:
-				size_bytes = parse_bytes_from_diskutil_size(current.get("Disk Size", ""))
-				if size_bytes == 0:
-					size_bytes = parse_bytes_from_diskutil_size(current.get("Volume Total Space", ""))
-				model = (current.get("Device / Media Name") or current.get("Media Name") or "").strip()
-				serial = (current.get("Serial Number") or "").strip()
-				fstype = (current.get("File System Personality") or "").strip()
-				label = (current.get("Volume Name") or "").strip()
-				uuid = (
-					current.get("Volume UUID")
-					or current.get("Disk / Partition UUID")
-					or current.get("APFS Volume Disk (Role)")
-					or ""
-				).strip()
-				solid_state = (current.get("Solid State") or "").strip().lower()
-				if solid_state == "yes":
-					discard = "Yes"
-				elif solid_state == "no":
-					discard = "No"
-				else:
-					discard = "N/A"
-				info_map[devnode] = {
-					"SIZE_BYTES": size_bytes,
-					"FSTYPE": fstype,
-					"UUID": uuid,
-					"LABEL": label,
-					"MODEL": model,
-					"SERIAL": serial,
-					"DISCARD": discard,
-				}
-			current = {}
+	if task.returncode == TIMEOUT_RETURNCODE:
+		if cut is not None:
+			cut.append('diskutil')
+	elif task.returncode != 0 and failed is not None:
+		failed.append('diskutil')
+	# Blank lines split one device's sections and lines of stars split devices: a device ends where the next one's
+	# Device Node starts. "Not applicable (no file system)" and the like are no value, except an empty slot's size,
+	# which is 0 as in 1.62 (a zero-size device, hidden by default).
+	devices = []
+	for line in task.stdout:
+		if ":" not in line:
 			continue
-		if ":" in line:
-			key, value = line.split(":", 1)
-			current[key.strip()] = value.strip()
+		key, value = (part.strip() for part in line.split(":", 1))
+		if key == "Device Node":
+			devices.append({})
+		if devices:
+			if not value.startswith("Not applicable"):
+				devices[-1][key] = value
+			elif key == "Disk Size" and "(no media)" in value:
+				devices[-1][key] = "0 B (0 Bytes)"
+	for current in devices:
+		devnode = current.get("Device Node")
+		if not devnode:
+			continue
+		# None: diskutil gave this device no size (0 is a size it gave). Disk Size first; older macOS gave some volumes
+		# their size only as Volume Total Space.
+		size_bytes = None
+		for size_key in ("Disk Size", "Volume Total Space"):
+			value = parse_bytes_from_diskutil_size(current.get(size_key))
+			if not size_bytes and value is not None:
+				size_bytes = value
+		model = current.get("Device / Media Name") or current.get("Media Name") or ""
+		serial = current.get("Serial Number") or ""
+		fstype = current.get("File System Personality") or ""
+		label = current.get("Volume Name") or ""
+		uuid = (
+			current.get("Volume UUID")
+			or current.get("Disk / Partition UUID")
+			or current.get("APFS Volume Disk (Role)")
+			or ""
+		)
+		solid_state = (current.get("Solid State") or "").lower()
+		if solid_state == "yes":
+			discard = "Yes"
+		elif solid_state == "no":
+			discard = "No"
+		else:
+			discard = "N/A"
+		info_map[devnode] = {
+			"SIZE_BYTES": size_bytes,
+			"FSTYPE": fstype,
+			"UUID": uuid,
+			"LABEL": label,
+			"MODEL": model,
+			"SERIAL": serial,
+			"DISCARD": discard,
+		}
 	return info_map
 
 # mountpoint -> the done lock of a thread still blocked in os.statvfs from an earlier call (held until it returns).
@@ -512,7 +522,9 @@ def _statvfs_with_timeout(mountpoint, timeout):
 
 	Returns None on timeout. The blocked thread can't be cancelled, so it is
 	remembered and later calls for that mountpoint return None right away
-	instead of piling up another stuck thread every watch refresh.
+	instead of piling up another stuck thread every watch refresh. An error
+	os.statvfs answers with (EIO, a directory this user cannot search) is
+	raised, in the caller's thread.
 
 	The thread is started by one C call, _thread.start_new_thread, and waited for on a bare lock it releases, so
 	the main thread takes no lock of threading's: a Ctrl-C that lands in threading.Thread.start() can leave its
@@ -544,25 +556,24 @@ def _statvfs_with_timeout(mountpoint, timeout):
 def get_statvfs_use_size(mountpoint, timeout=None):
 	"""Return (total_bytes, used_bytes, avail_bytes) like GNU df, or None if
 	statvfs did not answer within `timeout` seconds (None = wait forever).
+	An error statvfs answers with (EIO, a dead FUSE mount, a directory this user cannot search) is raised: it is
+	no size of 0.
 
 	used = (f_blocks - f_bfree) * frsize  — actual allocated blocks, not counting
 	root-reserved space as used. avail = f_bavail * frsize (space non-root can use).
 	FSUSE% should be used / (used + avail), matching df Use%.
 	"""
-	try:
-		if timeout is None:
-			st = os.statvfs(mountpoint)
-		else:
-			st = _statvfs_with_timeout(mountpoint, timeout)
-			if st is None:
-				return None
-		block_size = st.f_frsize if st.f_frsize > 0 else st.f_bsize
-		total = st.f_blocks * block_size
-		avail = st.f_bavail * block_size
-		used = (st.f_blocks - st.f_bfree) * block_size
-		return total, used, avail
-	except Exception:
-		return 0, 0, 0
+	if timeout is None:
+		st = os.statvfs(mountpoint)
+	else:
+		st = _statvfs_with_timeout(mountpoint, timeout)
+		if st is None:
+			return None
+	block_size = st.f_frsize if st.f_frsize > 0 else st.f_bsize
+	total = st.f_blocks * block_size
+	avail = st.f_bavail * block_size
+	used = (st.f_blocks - st.f_bfree) * block_size
+	return total, used, avail
 
 def read_discard_support(sysfs_block_path):
 	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
@@ -1037,14 +1048,23 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 					filter_patterns=None,invert_match=False,match_devname_only=False,timeout=None,
 					debug=False,cut=None):
 	"""Rows of the table, header first. cut: a list that gets the name of each command whose answer the timeout
-	cut short ('diskutil', 'mount', 'lsblk'; see CUT_WHAT)."""
+	cut short ('diskutil', 'mount', 'lsblk'; see CUT_WHAT).
+
+	A filter drops a row only on a value that was read: a SIZE diskutil did not give is not a zero size, a blank
+	FSTYPE whose source did not answer in full is not "no filesystem", and macOS throughput, which is never read, is
+	not idle. Such a row stays: SIZE or FSTYPE blank, READ and WRITE 0 on macOS. A mount whose statvfs failed stays
+	too, with SIZE blank and FSUSE% ERROR (one that hung: TIMEOUT)."""
 	global _DEBUG_MODE
 	if debug:
 		_DEBUG_MODE = True
 	# None (the default for library callers) means no limit, as 0 does; multiCMD takes only a number.
 	timeout = timeout or 0
+	if cut is None:
+		cut = []
 	if tptDict is None:
 		tptDict = {}
+	# macOS has no per-device throughput (READ and WRITE show 0), so -A drops nothing there.
+	active_only = active_only and not IS_DARWIN
 	# One deadline for the whole refresh: a smartctl stuck in D-state on a dying
 	# disk can't be killed, so waiting `timeout` per partition would add up.
 	deadline = time.monotonic() + timeout if timeout else None
@@ -1057,8 +1077,9 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	# Filters may need data that isn't a displayed column (-F needs FSTYPE).
 	collect_fields = (output_fields_set | {'FSTYPE'}) if formated_only else output_fields_set
 	macos_info = {}
+	diskutil_failed = []
 	if IS_DARWIN and {'SIZE','FSTYPE','UUID','LABEL','MODEL','SERIAL','DISCARD'}.intersection(collect_fields):
-		macos_info = get_macos_diskutil_info(timeout=timeout, cut=cut)
+		macos_info = get_macos_diskutil_info(timeout=timeout, cut=cut, failed=diskutil_failed)
 	if (not IS_DARWIN) and LSBLK_FIELDS.intersection(collect_fields):
 		lsblk_cmd = 'lsblk -b -n -p -o NAME,SIZE,FSTYPE,UUID,LABEL,MODEL,SERIAL -P'
 		lsblk_result = multiCMD.run_command(lsblk_cmd, timeout=timeout, quiet=True, wait_for_return=False, return_object=True)
@@ -1108,12 +1129,16 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	size_dict = {}
 	model_dict = {}
 	serial_dict = {}
+	# Whether a blank FSTYPE of an unmounted device was read (its source answered in full: lsblk and diskutil exited 0,
+	# mount was not stopped), so -F may drop it.
+	fstype_answered = IS_DARWIN and 'diskutil' not in cut and not diskutil_failed and 'mount' not in cut
 	if (not IS_DARWIN) and LSBLK_FIELDS.intersection(collect_fields):
 		lsblk_result.thread.join(_remaining(deadline))
 		if lsblk_result.returncode == 0:
+			fstype_answered = True
 			populate_lsblk_dicts(lsblk_result.stdout, collect_fields, uuid_dict, fstype_dict, label_dict, size_dict,
 								model_dict=model_dict, serial_dict=serial_dict)
-		elif cut is not None and LSBLK_NOTE_FIELDS.intersection(collect_fields) and (
+		elif LSBLK_NOTE_FIELDS.intersection(collect_fields) and (
 				lsblk_result.returncode == TIMEOUT_RETURNCODE or lsblk_result.thread.is_alive()):
 			# stopped at --timeout, or still running when the refresh's deadline came
 			cut.append('lsblk')
@@ -1125,8 +1150,6 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 				fstype_dict[devname] = info['FSTYPE']
 			if 'LABEL' in output_fields_set and info.get('LABEL'):
 				label_dict[devname] = info['LABEL']
-			if 'SIZE' in output_fields_set and info.get('SIZE_BYTES'):
-				size_dict[devname] = info['SIZE_BYTES']
 	for device_name in target_devices:
 		if mounted_only and device_name not in mount_table:
 			continue
@@ -1197,11 +1220,17 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 					continue
 				device_properties['MOUNTPOINT'] = mount_entry.MOUNTPOINT
 				statvfs_wait = None if deadline is None else max(_remaining(deadline), STATVFS_MIN_WAIT)
-				usage = get_statvfs_use_size(device_properties['MOUNTPOINT'], timeout=statvfs_wait)
+				try:
+					usage = get_statvfs_use_size(device_properties['MOUNTPOINT'], timeout=statvfs_wait)
+					not_read = 'TIMEOUT'  # statvfs gave no answer in time
+				except Exception as e:
+					debug_exc('statvfs', e)
+					usage, not_read = None, 'ERROR'  # statvfs answered with an error
 				if usage is None:
-					# Hung network mount: always show it, it's what you'd want to see.
+					# A hung or failing mount: always show it, it's what you'd want to see. No size was read, which is
+					# not a size of 0, so the row stays and FSUSE% says why it has no number.
 					device_properties['SIZE'] = ''
-					device_properties['FSUSE%'] = 'TIMEOUT'
+					device_properties['FSUSE%'] = not_read
 					output_list.append([device_properties[output_field] for output_field in output_fields])
 					continue
 				size_bytes, used_bytes, avail_bytes = usage
@@ -1214,17 +1243,19 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			device_properties['FSTYPE'] = fstype_dict.get(device_name, '')
 			# fstype_dict only holds non-empty types. Squashfs hiding is best effort
 			# here: it is only filled when FSTYPE is collected (an output column or -F).
-			if not keep_fstype(device_name, device_properties['FSTYPE'], formated_only, show_squashfs):
+			fstype_read = fstype_answered and (not IS_DARWIN or device_name in macos_info)
+			if not keep_fstype(device_name, device_properties['FSTYPE'], formated_only and fstype_read, show_squashfs):
 				continue
 			if IS_DARWIN:
-				size_bytes = size_dict.get(device_name, macos_info.get(device_name, {}).get('SIZE_BYTES', 0))
+				# None: diskutil did not run, was stopped before this device, or gave it no size.
+				size_bytes = macos_info.get(device_name, {}).get('SIZE_BYTES')
 			else:
 				size_bytes = size_dict.get(device_name)
 				if size_bytes is None:
 					size_bytes = read_size(os.path.join('/sys/class/block', os.path.basename(device_name)))
 			if size_bytes == 0 and not show_zero_size_devices:
 				continue
-			device_properties['SIZE'] = format_size(size_bytes, print_bytes, use_1024)
+			device_properties['SIZE'] = '' if size_bytes is None else format_size(size_bytes, print_bytes, use_1024)
 			output_list.append([device_properties[output_field] for output_field in output_fields])
 	if filter_patterns and not match_devname_only:
 		output_list = filter_rows(output_list, filter_patterns, invert_match)
@@ -1275,10 +1306,10 @@ def drop_empty_columns(rows):
 	return [[row[i] for i in keep] for row in rows]
 
 def _parse_percent(value):
-	"""FSUSE% cell to an int percent, or None for '', N/A or TIMEOUT.
+	"""FSUSE% cell to an int percent, or None for '', N/A, TIMEOUT or ERROR.
 
-	>>> _parse_percent('35%'), _parse_percent('N/A'), _parse_percent('TIMEOUT')
-	(35, None, None)
+	>>> _parse_percent('35%'), _parse_percent('N/A'), _parse_percent('TIMEOUT'), _parse_percent('ERROR')
+	(35, None, None, None)
 	"""
 	return int(value[:-1]) if value.endswith('%') and value[:-1].isdigit() else None
 
@@ -1297,8 +1328,9 @@ def check_rows(rows, max_use):
 
 	A problem (status 1) is SMART that isn't healthy or unknown (FAILED!,
 	vendor failure text, a hung smartctl), FSUSE% at or above max_use, or a
-	mount that timed out. Otherwise SMART that couldn't be read (status 3)
-	is reported, since a blank result would hide that the disk wasn't checked.
+	mount that timed out. Otherwise SMART that couldn't be read, or a mount
+	whose use statvfs failed to read (FSUSE% ERROR), is reported (status 3),
+	since a blank result would hide that it wasn't checked.
 	A check whose column is missing (excluded with -x) is skipped.
 
 	>>> rows = [['NAME', 'FSUSE%', 'SMART'], ['sda1', '42%', 'OK'], ['sda2', '95%', 'OK'], ['sdb', '', 'UNKNOWN']]
@@ -1306,6 +1338,8 @@ def check_rows(rows, max_use):
 	([['NAME', 'FSUSE%', 'SMART'], ['sda2', '95%', 'OK'], ['sdb', '', 'UNKNOWN']], 1)
 	>>> check_rows([rows[0], rows[1], rows[3]], 90)
 	([['NAME', 'FSUSE%', 'SMART'], ['sdb', '', 'UNKNOWN']], 3)
+	>>> check_rows([rows[0], ['sda3', 'ERROR', 'OK']], 90)
+	([['NAME', 'FSUSE%', 'SMART'], ['sda3', 'ERROR', 'OK']], 3)
 	"""
 	if not rows:
 		return rows, CHECK_OK
@@ -1319,7 +1353,8 @@ def check_rows(rows, max_use):
 				return CHECK_PROBLEM
 		if smart_i is not None and row[smart_i] not in SMART_HEALTHY:
 			return CHECK_UNKNOWN if row[smart_i] in SMART_UNKNOWN else CHECK_PROBLEM
-		return CHECK_OK
+		# statvfs failed on the mount: its use was not read (the disk's SMART above still counts)
+		return CHECK_UNKNOWN if use_i is not None and row[use_i] == 'ERROR' else CHECK_OK
 	statuses = [row_status(row) for row in rows[1:]]
 	reported = [header] + [row for row, st in zip(rows[1:], statuses) if st != CHECK_OK]
 	if CHECK_PROBLEM in statuses:
@@ -1337,7 +1372,7 @@ def cut_note(command, timeout):
 def rows_to_objects(rows):
 	"""Turn get_drives_info(print_bytes=True) rows into one dict per row, with
 	SIZE/READ/WRITE as integer bytes and FSUSE% as an integer percent (None
-	when empty, N/A or TIMEOUT).
+	when empty, N/A, TIMEOUT or ERROR).
 
 	>>> rows_to_objects([['NAME', 'SIZE', 'FSUSE%'], ['sda1', '1000', '35%'], ['sda2', '', 'N/A']])
 	[{'NAME': 'sda1', 'SIZE': 1000, 'FSUSE%': 35}, {'NAME': 'sda2', 'SIZE': None, 'FSUSE%': None}]
@@ -1367,7 +1402,7 @@ def main():
 	parser.add_argument('-F','-fo','--formated_only', help="Show only formated filesystems", action="store_true")
 	parser.add_argument('-M','-mo','--mounted_only', help="Show only mounted filesystems", action="store_true")
 	parser.add_argument('-B','-bo','--best_only', help="Show only shortest mount point for each device", action="store_true")
-	parser.add_argument('-A','-ao','--active_only', help="Show only active devices (read/write activity since boot on the first query, during the last interval on later watch refreshes)", action="store_true")
+	parser.add_argument('-A','-ao','--active_only', help="Show only active devices (read/write activity since boot on the first query, during the last interval on later watch refreshes; no effect on macOS, which has no throughput to read)", action="store_true")
 	parser.add_argument('-R','--full', help="Show full device information, do not collapse drive info when length > console length", action="store_true")
 	parser.add_argument('-P','--pseudo', help="Include pseudo file systems as well (tmpfs / nfs / cifs etc.)", action="store_true")
 	parser.add_argument('-o','--output', help="Specify which output columns to print.Use comma to separate columns. default: all available", default="all", type=str)
@@ -1375,7 +1410,7 @@ def main():
 	parser.add_argument('-t','--timeout', help="Set command timeout in seconds (default: 2; 0: no limit)", default=2, type=float)
 	parser.add_argument('-w','--watch', metavar='SECONDS', type=float, default=None,
 						help="Repeat output every SECONDS (watch mode). Equivalent to a trailing integer positional.")
-	parser.add_argument('--check', help="Health check: print rows with a problem (SMART failing, FSUSE%% >= --max_use, hung mount; exit 1), else print nothing (no rows, with -j or -J) and exit 0. Unknown, with no problem found, is exit 3: SMART unreadable (rows printed), or a command --timeout stopped that can hide what is checked (named on stderr)", action="store_true")
+	parser.add_argument('--check', help="Health check: print rows with a problem (SMART failing, FSUSE%% >= --max_use, hung mount; exit 1), else print nothing (with -j or -J, a result with no rows) and exit 0. Unknown, with no problem found, is exit 3: SMART unreadable or a mount whose use statvfs could not read (rows printed), or a command --timeout stopped that can hide what is checked (named on stderr)", action="store_true")
 	parser.add_argument('--max_use', metavar='PCT', type=int, default=90, help="FSUSE%% at or above which --check reports a filesystem (default: 90)")
 	parser.add_argument('--sudo', help="Run commands as root with sudo. Needed for querying SMART info.", action="store_true")
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")
@@ -1419,18 +1454,14 @@ def main():
 	redraw = print_period > 0 and sys.stdout.isatty() and not (args.json or args.json_objects)
 	check_status = CHECK_OK
 	told = set()  # the commands whose cut note was printed
-	# --check: the checked columns a cut command can hide, by blanking a cell it fills (mount: FSUSE%) or by dropping a
-	# row it decides, with the row's columns. mount decides which filesystems are mounted, so with -M the mounted rows
-	# (FSUSE% and SMART); diskutil's SIZE and, with -F, lsblk's FSTYPE decide the unmounted rows, which have no FSUSE%
-	# and which -M drops anyway. A pattern (not -D) matches what all three fill, so it makes each decide every row.
+	# --check: the checked columns a command --timeout stopped can hide. A filter drops a row only on a value that was
+	# read (get_drives_info), so a stopped command hides a check only where its answer is the check's input: mount lists
+	# the mounted filesystems (their FSUSE%, and with -M the rows), and a pattern (not -D) matches any cell it fills.
 	patterns = bool(args.filter_patterns) and not args.match_devname_only
-	def when(condition, columns):
-		return set(columns) if condition else set()
-	cut_hides = {
-		'mount': {'FSUSE%'} | when(args.mounted_only or patterns, CHECK_FIELDS),
-		'diskutil': when(patterns, CHECK_FIELDS) | when(not args.mounted_only, ['SMART']),
-		'lsblk': when(patterns, CHECK_FIELDS) | when(args.formated_only and not args.mounted_only, ['SMART']),
-	}
+	def cut_hides(command):
+		if patterns or (command == 'mount' and args.mounted_only):
+			return set(CHECK_FIELDS)
+		return {'FSUSE%'} if command == 'mount' else set()
 	try:
 		while True:
 			cut = []
@@ -1448,7 +1479,7 @@ def main():
 				results, check_status = check_rows(results, args.max_use)
 				if check_status == CHECK_OK:
 					# A cut that can hide what --check reads makes the run unknown; any other cut stays quiet.
-					if any(cut_hides[command].intersection(read) for command in cut):
+					if any(cut_hides(command).intersection(read) for command in cut):
 						check_status = CHECK_UNKNOWN
 					else:
 						cut = []
@@ -1487,9 +1518,8 @@ def main():
 			if print_period <= 0:
 				break
 			time.sleep(print_period)
-			# Throughput is always 0 on macOS, so active_only would hide every row.
 			# Devices named by filter patterns stay on screen even while idle.
-			if not IS_DARWIN and not args.filter_patterns:
+			if not args.filter_patterns:
 				args.active_only = True
 	except KeyboardInterrupt:
 		return 130

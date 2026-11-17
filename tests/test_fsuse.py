@@ -1,3 +1,4 @@
+import errno
 import threading
 import time
 from types import SimpleNamespace
@@ -99,3 +100,17 @@ def test_statvfs_of_a_mount_that_answers_again_is_asked_again(monkeypatch):
         usage = statblk.get_statvfs_use_size("/nfs", timeout=5)
     assert usage == (100 * 1024, 60 * 1024, 30 * 1024)
     assert calls == ["/nfs", "/nfs"]
+
+
+@pytest.mark.parametrize("timeout", [None, 5])
+@pytest.mark.parametrize("error", [OSError(errno.EIO, "Input/output error"), PermissionError(errno.EACCES, "denied")],
+                         ids=["EIO", "PermissionError"])
+def test_statvfs_error_is_raised_not_a_size_of_0(monkeypatch, error, timeout):
+    # 1.63 first read any error as (0, 0, 0): a mount whose statvfs failed looked like a zero-size one and dropped
+    # out of the table and of --check. Both paths: waited for forever (timeout None) and in a thread.
+    def failing(_path):
+        raise error
+
+    monkeypatch.setattr(statblk.os, "statvfs", failing)
+    with pytest.raises(type(error)):
+        statblk.get_statvfs_use_size("/mnt/dead", timeout=timeout)
