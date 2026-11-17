@@ -522,7 +522,9 @@ def _statvfs_with_timeout(mountpoint, timeout):
 
 	Returns None on timeout. The blocked thread can't be cancelled, so it is
 	remembered and later calls for that mountpoint return None right away
-	instead of piling up another stuck thread every watch refresh.
+	instead of piling up another stuck thread every watch refresh. An error
+	os.statvfs answers with (EIO, a directory this user cannot search) is
+	raised, in the caller's thread.
 
 	The thread is started by one C call, _thread.start_new_thread, and waited for on a bare lock it releases, so
 	the main thread takes no lock of threading's: a Ctrl-C that lands in threading.Thread.start() can leave its
@@ -1370,7 +1372,7 @@ def cut_note(command, timeout):
 def rows_to_objects(rows):
 	"""Turn get_drives_info(print_bytes=True) rows into one dict per row, with
 	SIZE/READ/WRITE as integer bytes and FSUSE% as an integer percent (None
-	when empty, N/A or TIMEOUT).
+	when empty, N/A, TIMEOUT or ERROR).
 
 	>>> rows_to_objects([['NAME', 'SIZE', 'FSUSE%'], ['sda1', '1000', '35%'], ['sda2', '', 'N/A']])
 	[{'NAME': 'sda1', 'SIZE': 1000, 'FSUSE%': 35}, {'NAME': 'sda2', 'SIZE': None, 'FSUSE%': None}]
