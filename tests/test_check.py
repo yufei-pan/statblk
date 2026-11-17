@@ -50,6 +50,11 @@ def test_failed_statvfs_is_unknown_unless_the_disk_fails(smart, status):
     assert statblk.check_rows([HEADER, row], 90) == ([HEADER, row], status)
 
 
+def test_failed_statvfs_is_unknown_in_a_space_only_check():
+    header = ["NAME", "FSUSE%"]  # -x SMART: the space check alone
+    assert statblk.check_rows([header, ["sda1", "ERROR"]], 90) == ([header, ["sda1", "ERROR"]], 3)
+
+
 def test_problem_beats_unknown_and_both_reported():
     rows = [HEADER, ["sda1", "95%", "OK"], ["sdb", "", "UNKNOWN"], ["sdc", "10%", "OK"]]
     assert statblk.check_rows(rows, 90) == ([HEADER, rows[1], rows[2]], 1)

@@ -224,8 +224,9 @@ def test_mac_active_only_keeps_the_rows(monkeypatch, capsys):
 
 
 # diskutil that exits with an error without being stopped: its output may end in the middle of a device.
-# disk4 and its partition disk4s1 (unmounted, with a filesystem) are the last devices; the output ends after the
-# partition's Device Node line, before its File System Personality.
+# disk4 and its partition disk4s1 (unmounted) are the last devices; the output ends after the partition's Device Node
+# line, with no File System Personality. After exit 0 that is a partition with no filesystem; after an error exit the
+# line may only have been cut off.
 DISK4 = ["", "   Device Identifier:         disk4", "   Device Node:               /dev/disk4", "",
          "   Disk Size:                 1.0 TB (1000204886016 Bytes) (exactly 1953525168 512-Byte-Units)", "",
          "   Device Identifier:         disk4s1", "   Device Node:               /dev/disk4s1"]
@@ -233,12 +234,19 @@ DISK4 = ["", "   Device Identifier:         disk4", "   Device Node:            
 
 @pytest.mark.parametrize("returncode, expected", [(0, (0, [], "", "")), (1, (1, ["disk4", "disk4s1"], "T\n", ""))],
                          ids=["exit 0", "exit 1"])
-def test_mac_formated_only_diskutil_that_failed_did_not_read_the_type(monkeypatch, capsys, returncode, expected):
+def test_mac_formated_only_diskutil_exit_decides_whether_the_type_was_read(monkeypatch, capsys, returncode, expected):
     # Only a diskutil that exited 0 answered in full: then disk4s1's blank type was read (no filesystem), and -F drops
     # it with disk4; after an error exit it was not read, so both stay and disk4's SMART is judged.
     run = _mac(monkeypatch, "/dev/disk4", diskutil=(MACOS26_DISKUTIL + DISK4, returncode),
                dev=MACOS26_DEV + ["/dev/disk4", "/dev/disk4s1"])
     assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-F"], run) == expected
+
+
+@pytest.mark.parametrize("stop", DISKUTIL_STOPS)
+def test_mac_formated_only_with_a_stopped_diskutil_still_shows_the_unformatted_failing_disk(monkeypatch, capsys, stop):
+    # diskutil did not answer in full, so disk0's blank type was not read: -F keeps it and its SMART is judged.
+    run = _mac(monkeypatch, "/dev/disk0", diskutil=(DISKUTIL_STOPS[stop], CUT))
+    assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-F"], run) == (1, DISK0, "T\n", _cut_line("diskutil", 2))
 
 
 # statvfs fails on the mounted volumes (a dead disk's EIO, a mount the user cannot search): the row stays with no
