@@ -435,20 +435,26 @@ def parse_bytes_from_diskutil_size(value):
 	match = re.search(r"\((\d+)\s+Bytes\)", value or "")
 	return int(match.group(1)) if match else None
 
-def get_macos_diskutil_info(timeout=0, cut=None):
+def get_macos_diskutil_info(timeout=0, cut=None, failed=None):
 	"""
 	Build map: /dev/diskXsY -> info from `diskutil info -all`.
 	Only used on macOS. timeout: seconds without output before diskutil is stopped (0: no limit).
 	cut: a list that gets 'diskutil' when the timeout stopped it (what it printed before is still read).
+	failed: a list that gets 'diskutil' when it exited with an error and was not stopped (what it printed is still
+	read, but it may have ended in the middle of a device).
 	"""
 	if not IS_DARWIN or not DISKUTIL_PATH:
 		return {}
 	info_map = {}
 	task = multiCMD.run_command(f"{DISKUTIL_PATH} info -all", timeout=timeout, quiet=True, return_object=True)
-	if task.returncode == TIMEOUT_RETURNCODE and cut is not None:
-		cut.append('diskutil')
+	if task.returncode == TIMEOUT_RETURNCODE:
+		if cut is not None:
+			cut.append('diskutil')
+	elif task.returncode != 0 and failed is not None:
+		failed.append('diskutil')
 	# Blank lines split one device's sections and lines of stars split devices: a device ends where the next one's
-	# Device Node starts. "Not applicable (no file system)" and the like are no value.
+	# Device Node starts. "Not applicable (no file system)" and the like are no value, except an empty slot's size,
+	# which is 0 as in 1.62 (a zero-size device, hidden by default).
 	devices = []
 	for line in task.stdout:
 		if ":" not in line:
@@ -456,8 +462,11 @@ def get_macos_diskutil_info(timeout=0, cut=None):
 		key, value = (part.strip() for part in line.split(":", 1))
 		if key == "Device Node":
 			devices.append({})
-		if devices and not value.startswith("Not applicable"):
-			devices[-1][key] = value
+		if devices:
+			if not value.startswith("Not applicable"):
+				devices[-1][key] = value
+			elif key == "Disk Size" and "(no media)" in value:
+				devices[-1][key] = "0 B (0 Bytes)"
 	for current in devices:
 		devnode = current.get("Device Node")
 		if not devnode:
@@ -1065,8 +1074,9 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	# Filters may need data that isn't a displayed column (-F needs FSTYPE).
 	collect_fields = (output_fields_set | {'FSTYPE'}) if formated_only else output_fields_set
 	macos_info = {}
+	diskutil_failed = []
 	if IS_DARWIN and {'SIZE','FSTYPE','UUID','LABEL','MODEL','SERIAL','DISCARD'}.intersection(collect_fields):
-		macos_info = get_macos_diskutil_info(timeout=timeout, cut=cut)
+		macos_info = get_macos_diskutil_info(timeout=timeout, cut=cut, failed=diskutil_failed)
 	if (not IS_DARWIN) and LSBLK_FIELDS.intersection(collect_fields):
 		lsblk_cmd = 'lsblk -b -n -p -o NAME,SIZE,FSTYPE,UUID,LABEL,MODEL,SERIAL -P'
 		lsblk_result = multiCMD.run_command(lsblk_cmd, timeout=timeout, quiet=True, wait_for_return=False, return_object=True)
@@ -1116,8 +1126,9 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	size_dict = {}
 	model_dict = {}
 	serial_dict = {}
-	# Whether a blank FSTYPE of an unmounted device was read (its source answered in full), so -F may drop it.
-	fstype_answered = IS_DARWIN and 'diskutil' not in cut and 'mount' not in cut
+	# Whether a blank FSTYPE of an unmounted device was read (its source answered in full: lsblk and diskutil exited 0,
+	# mount was not stopped), so -F may drop it.
+	fstype_answered = IS_DARWIN and 'diskutil' not in cut and not diskutil_failed and 'mount' not in cut
 	if (not IS_DARWIN) and LSBLK_FIELDS.intersection(collect_fields):
 		lsblk_result.thread.join(_remaining(deadline))
 		if lsblk_result.returncode == 0:

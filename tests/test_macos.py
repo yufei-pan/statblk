@@ -35,9 +35,10 @@ def test_get_macos_diskutil_info_reads_every_section(monkeypatch):
 
 @pytest.mark.parametrize("size_line, expected", [
     ("   Disk Size:                 0 B (0 Bytes) (exactly 0 512-Byte-Units)", 0),
-    ("   Disk Size:                 Not applicable (no media)", None),
+    ("   Disk Size:                 Not applicable (no media)", 0),  # an empty slot, as 1.62 read it
+    ("   Disk Size:                 Not applicable (no file system)", None),  # no other "Not applicable" is a size
     (None, None),  # diskutil was stopped before the line, or never prints it
-])
+], ids=["zero bytes", "no media", "other not applicable", "no line"])
 def test_diskutil_size_none_when_it_gave_none(monkeypatch, size_line, expected):
     lines = ["   Device Identifier:         disk5", "   Device Node:               /dev/disk5", "",
              "   Solid State:               No"] + ([size_line] if size_line else [])
@@ -133,7 +134,7 @@ def test_darwin_formated_only_without_fstype_column(monkeypatch, output):
         "/dev/disk4s1": {"SIZE_BYTES": 1000, "FSTYPE": "ExFAT"},
         "/dev/disk4s2": {"SIZE_BYTES": 2000, "FSTYPE": ""},
     }
-    monkeypatch.setattr(statblk, "get_macos_diskutil_info", lambda timeout=0, cut=None: info)
+    monkeypatch.setattr(statblk, "get_macos_diskutil_info", lambda timeout=0, cut=None, failed=None: info)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     rows = statblk.get_drives_info(output=output, formated_only=True, timeout=2)
     assert [r[0] for r in rows[1:]] == ["disk4s1"]
@@ -181,6 +182,22 @@ def test_diskutil_and_mount_stopped_by_the_timeout_are_recorded(monkeypatch, ret
     assert "/dev/disk3s1" in statblk.get_macos_diskutil_info(timeout=1, cut=cut)
     assert list(statblk.parseMount(1, cut=cut)) == ["/dev/disk3s1"]
     assert cut == expected
+
+
+@pytest.mark.parametrize("returncode, cut, failed", [(124, ["diskutil"], []), (0, [], []), (1, [], ["diskutil"])])
+def test_diskutil_that_failed_is_recorded_apart_from_one_the_timeout_stopped(monkeypatch, returncode, cut, failed):
+    # An error exit is not a stop at -t: it has no stderr note, but its output may end in the middle of a device.
+    info = _diskutil_info_lists(monkeypatch, MACOS26_DISKUTIL, returncode)
+    assert (info["cut"], info["failed"]) == (cut, failed)
+
+
+def _diskutil_info_lists(monkeypatch, lines, returncode):
+    monkeypatch.setattr(statblk, "IS_DARWIN", True)
+    monkeypatch.setattr(statblk, "DISKUTIL_PATH", "/usr/sbin/diskutil")
+    monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: FakeCmdResult(lines, returncode))
+    lists = {"cut": [], "failed": []}
+    statblk.get_macos_diskutil_info(timeout=1, **lists)
+    return lists
 
 
 @pytest.mark.parametrize("returncode, expected", [(124, ["diskutil", "mount"]), (0, [])])
@@ -265,6 +282,26 @@ def test_darwin_formated_only_drops_only_a_type_read_as_blank(monkeypatch, mount
     typeless = ["disk0", "disk0s1", "disk0s2", "disk0s3", "disk1", "disk2", "disk3"]  # no File System Personality
     assert [name for name in _names(rows) if name in typeless] == [name for name in kept if name in typeless]
     assert "disk3s5" in _names(rows)
+
+
+@pytest.mark.parametrize("returncode, listed", [(0, False), (1, True), (124, True)])
+def test_darwin_formated_only_keeps_a_device_whose_type_line_diskutil_did_not_reach(monkeypatch, returncode, listed):
+    # diskutil's output ends right after disk3s1's Device Node, before its File System Personality: a diskutil that
+    # exited 0 answered in full, so that blank type is read; one that failed or was stopped did not.
+    cut_at = MACOS26_DISKUTIL.index("   Device Node:               /dev/disk3s1") + 1
+    _darwin_machine(monkeypatch, diskutil=(MACOS26_DISKUTIL[:cut_at], returncode))
+    rows = statblk.get_drives_info(output="NAME,FSTYPE", formated_only=True, timeout=2)
+    assert ("disk3s1" in _names(rows)) == listed
+
+
+@pytest.mark.parametrize("show_zero, listed", [(False, False), (True, True)])
+def test_darwin_empty_slot_is_a_zero_size_device(monkeypatch, show_zero, listed):
+    # "Disk Size: Not applicable (no media)" reads as 0, as in 1.62: hidden by default, like any zero-size device.
+    slot = ["", "   Device Identifier:         disk9", "   Device Node:               /dev/disk9", "",
+            "   Disk Size:                 Not applicable (no media)", "   Solid State:               No"]
+    _darwin_machine(monkeypatch, dev=MACOS26_DEV + ["/dev/disk9"], diskutil=(MACOS26_DISKUTIL + slot, 0))
+    rows = statblk.get_drives_info(output="NAME,SIZE", show_zero_size_devices=show_zero, timeout=2)
+    assert (["disk9", "0B"] in rows) == listed
 
 
 def test_darwin_formated_only_keeps_a_device_diskutil_did_not_describe(monkeypatch):
