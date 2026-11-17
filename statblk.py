@@ -251,10 +251,10 @@ PK(3e0G%Vs7pio1c66)QB"pE/h@ja9XUe^=%.fgD%`71d6,o<-(ALVd*R_R%%Dd.TjMA9*K'Qm=K%Hg2
 F5nLMPY&>'FbO!:2EM(Le5;O8_651INa^6B;&8O+f/_4tu>n[>mknaYOAO5e]li*2<e44uIlM"?6p'''
 	exec(zlib.decompress(base64.a85decode(_SRC_B85)).decode("utf-8"), multiCMD.__dict__)
 
-version = '1.62'
+version = '1.63'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2026-11-15'
+COMMIT_DATE = '2026-11-16'
 
 # smartmontools installs into sbin, which non-root PATHs often omit (e.g. Debian),
 # yet `--sudo` exists exactly for non-root users who want SMART.
@@ -423,24 +423,17 @@ def build_symlink_dict(dir_path):
 	return mapping
 
 def parse_bytes_from_diskutil_size(value):
-	"""Extract byte size from diskutil size strings.
+	"""Byte count from a diskutil size line, or None when it gives none.
 
-	>>> parse_bytes_from_diskutil_size('100.0 GB (107374182400 Bytes)')
-	107374182400
-	>>> parse_bytes_from_diskutil_size('')
+	>>> parse_bytes_from_diskutil_size('500.3 GB (500277792768 Bytes) (exactly 977105064 512-Byte-Units)')
+	500277792768
+	>>> parse_bytes_from_diskutil_size('0 B (0 Bytes) (exactly 0 512-Byte-Units)')
 	0
-	>>> parse_bytes_from_diskutil_size('no bytes here')
-	0
+	>>> parse_bytes_from_diskutil_size('') is None, parse_bytes_from_diskutil_size('no bytes here') is None
+	(True, True)
 	"""
-	if not value:
-		return 0
-	match = re.search(r"\((\d+)\s+Bytes\)", value)
-	if match:
-		try:
-			return int(match.group(1))
-		except Exception:
-			return 0
-	return 0
+	match = re.search(r"\((\d+)\s+Bytes\)", value or "")
+	return int(match.group(1)) if match else None
 
 def get_macos_diskutil_info(timeout=0, cut=None):
 	"""
@@ -451,49 +444,57 @@ def get_macos_diskutil_info(timeout=0, cut=None):
 	if not IS_DARWIN or not DISKUTIL_PATH:
 		return {}
 	info_map = {}
-	current = {}
 	task = multiCMD.run_command(f"{DISKUTIL_PATH} info -all", timeout=timeout, quiet=True, return_object=True)
 	if task.returncode == TIMEOUT_RETURNCODE and cut is not None:
 		cut.append('diskutil')
-	for raw_line in task.stdout + [""]:
-		line = raw_line.rstrip("\n")
-		if not line.strip():
-			devnode = current.get("Device Node", "").strip()
-			if devnode:
-				size_bytes = parse_bytes_from_diskutil_size(current.get("Disk Size", ""))
-				if size_bytes == 0:
-					size_bytes = parse_bytes_from_diskutil_size(current.get("Volume Total Space", ""))
-				model = (current.get("Device / Media Name") or current.get("Media Name") or "").strip()
-				serial = (current.get("Serial Number") or "").strip()
-				fstype = (current.get("File System Personality") or "").strip()
-				label = (current.get("Volume Name") or "").strip()
-				uuid = (
-					current.get("Volume UUID")
-					or current.get("Disk / Partition UUID")
-					or current.get("APFS Volume Disk (Role)")
-					or ""
-				).strip()
-				solid_state = (current.get("Solid State") or "").strip().lower()
-				if solid_state == "yes":
-					discard = "Yes"
-				elif solid_state == "no":
-					discard = "No"
-				else:
-					discard = "N/A"
-				info_map[devnode] = {
-					"SIZE_BYTES": size_bytes,
-					"FSTYPE": fstype,
-					"UUID": uuid,
-					"LABEL": label,
-					"MODEL": model,
-					"SERIAL": serial,
-					"DISCARD": discard,
-				}
-			current = {}
+	# Blank lines split one device's sections and lines of stars split devices: a device ends where the next one's
+	# Device Node starts. "Not applicable (no file system)" and the like are no value.
+	devices = []
+	for line in task.stdout:
+		if ":" not in line:
 			continue
-		if ":" in line:
-			key, value = line.split(":", 1)
-			current[key.strip()] = value.strip()
+		key, value = (part.strip() for part in line.split(":", 1))
+		if key == "Device Node":
+			devices.append({})
+		if devices and not value.startswith("Not applicable"):
+			devices[-1][key] = value
+	for current in devices:
+		devnode = current.get("Device Node")
+		if not devnode:
+			continue
+		# None: diskutil gave this device no size (0 is a size it gave). Disk Size first; older macOS gave some volumes
+		# their size only as Volume Total Space.
+		size_bytes = None
+		for size_key in ("Disk Size", "Volume Total Space"):
+			value = parse_bytes_from_diskutil_size(current.get(size_key))
+			if not size_bytes and value is not None:
+				size_bytes = value
+		model = current.get("Device / Media Name") or current.get("Media Name") or ""
+		serial = current.get("Serial Number") or ""
+		fstype = current.get("File System Personality") or ""
+		label = current.get("Volume Name") or ""
+		uuid = (
+			current.get("Volume UUID")
+			or current.get("Disk / Partition UUID")
+			or current.get("APFS Volume Disk (Role)")
+			or ""
+		)
+		solid_state = (current.get("Solid State") or "").lower()
+		if solid_state == "yes":
+			discard = "Yes"
+		elif solid_state == "no":
+			discard = "No"
+		else:
+			discard = "N/A"
+		info_map[devnode] = {
+			"SIZE_BYTES": size_bytes,
+			"FSTYPE": fstype,
+			"UUID": uuid,
+			"LABEL": label,
+			"MODEL": model,
+			"SERIAL": serial,
+			"DISCARD": discard,
+		}
 	return info_map
 
 # mountpoint -> the done lock of a thread still blocked in os.statvfs from an earlier call (held until it returns).
@@ -1217,7 +1218,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			if not keep_fstype(device_name, device_properties['FSTYPE'], formated_only, show_squashfs):
 				continue
 			if IS_DARWIN:
-				size_bytes = size_dict.get(device_name, macos_info.get(device_name, {}).get('SIZE_BYTES', 0))
+				size_bytes = size_dict.get(device_name, macos_info.get(device_name, {}).get('SIZE_BYTES') or 0)
 			else:
 				size_bytes = size_dict.get(device_name)
 				if size_bytes is None:

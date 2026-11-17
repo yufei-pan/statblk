@@ -1,0 +1,927 @@
+26.6.2
+---DEV
+disk0 disk0s1 disk0s2 disk0s3 disk1 disk1s1 disk1s2 disk1s3 disk1s4 disk2 disk2s1 disk2s2 disk3 disk3s1 disk3s1s1 disk3s2 disk3s3 disk3s4 disk3s5 disk3s6 
+---MOUNT
+/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)
+devfs on /dev (devfs, local, nobrowse)
+/dev/disk3s6 on /System/Volumes/VM (apfs, local, noexec, journaled, noatime, nobrowse)
+/dev/disk3s2 on /System/Volumes/Preboot (apfs, local, journaled, nobrowse)
+/dev/disk3s4 on /System/Volumes/Update (apfs, local, journaled, nobrowse)
+/dev/disk1s2 on /System/Volumes/xarts (apfs, local, noexec, journaled, noatime, nobrowse)
+/dev/disk1s1 on /System/Volumes/iSCPreboot (apfs, local, journaled, nobrowse)
+/dev/disk1s3 on /System/Volumes/Hardware (apfs, local, journaled, nobrowse)
+/dev/disk3s5 on /System/Volumes/Data (apfs, local, journaled, nobrowse, protect, root data)
+map auto_home on /System/Volumes/Data/home (autofs, automounted, nobrowse)
+---DISKUTIL
+   Device Identifier:         disk0
+   Device Node:               /dev/disk0
+   Whole:                     Yes
+   Part of Whole:             disk0
+   Device / Media Name:       APPLE SSD AP0512Z
+
+   Volume Name:               Not applicable (no file system)
+   Mounted:                   Not applicable (no file system)
+   File System:               None
+
+   Content (IOContent):       GUID_partition_scheme
+   OS Can Be Installed:       No
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+
+   Disk Size:                 500.3 GB (500277792768 Bytes) (exactly 977105064 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Media OS Use Only:         No
+   Media Read-Only:           No
+   Volume Read-Only:          Not applicable (no file system)
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Hardware AES Support:      Yes
+
+**********
+
+   Device Identifier:         disk0s1
+   Device Node:               /dev/disk0s1
+   Whole:                     No
+   Part of Whole:             disk0
+
+   Volume Name:               Not applicable (no file system)
+   Mounted:                   Not applicable (no file system)
+   File System:               None
+
+   Partition Type:            Apple_APFS_ISC
+   OS Can Be Installed:       No
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000001
+   Partition Offset:          24576 Bytes (6 4096-Byte-Device-Blocks)
+
+   Disk Size:                 524.3 MB (524288000 Bytes) (exactly 1024000 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Media OS Use Only:         No
+   Media Read-Only:           No
+   Volume Read-Only:          Not applicable (no file system)
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Hardware AES Support:      Yes
+
+**********
+
+   Device Identifier:         disk0s2
+   Device Node:               /dev/disk0s2
+   Whole:                     No
+   Part of Whole:             disk0
+
+   Volume Name:               Not applicable (no file system)
+   Mounted:                   Not applicable (no file system)
+   File System:               None
+
+   Partition Type:            Apple_APFS
+   OS Can Be Installed:       No
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000002
+   Partition Offset:          524312576 Bytes (128006 4096-Byte-Device-Blocks)
+
+   Disk Size:                 494.4 GB (494384795648 Bytes) (exactly 965595304 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Media OS Use Only:         No
+   Media Read-Only:           No
+   Volume Read-Only:          Not applicable (no file system)
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Hardware AES Support:      Yes
+
+   This disk is an APFS Physical Store.  APFS Information:
+   APFS Container:            disk3
+
+**********
+
+   Device Identifier:         disk0s3
+   Device Node:               /dev/disk0s3
+   Whole:                     No
+   Part of Whole:             disk0
+
+   Volume Name:               Not applicable (no file system)
+   Mounted:                   Not applicable (no file system)
+   File System:               None
+
+   Partition Type:            Apple_APFS_Recovery
+   OS Can Be Installed:       No
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000003
+   Partition Offset:          494909108224 Bytes (120827419 4096-Byte-Device-Blocks)
+
+   Disk Size:                 5.4 GB (5368664064 Bytes) (exactly 10485672 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Media OS Use Only:         No
+   Media Read-Only:           No
+   Volume Read-Only:          Not applicable (no file system)
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Hardware AES Support:      Yes
+
+**********
+
+   Device Identifier:         disk1
+   Device Node:               /dev/disk1
+   Whole:                     Yes
+   Part of Whole:             disk1
+   Device / Media Name:       APPLE SSD AP0512Z
+
+   Volume Name:               Not applicable (no file system)
+   Mounted:                   Not applicable (no file system)
+   File System:               None
+
+   Content (IOContent):       EF57347C-0000-11AA-AA11-00306543ECAC
+   OS Can Be Installed:       No
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000004
+
+   Disk Size:                 524.3 MB (524288000 Bytes) (exactly 1024000 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Media OS Use Only:         Yes
+   Media Read-Only:           No
+   Volume Read-Only:          Not applicable (no file system)
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Virtual:                   Yes
+   Hardware AES Support:      Yes
+
+   This disk is an APFS Container.  APFS Information:
+   APFS Physical Store:       disk0s1
+
+**********
+
+   Device Identifier:         disk1s1
+   Device Node:               /dev/disk1s1
+   Whole:                     No
+   Part of Whole:             disk1
+
+   Volume Name:               Volume 1
+   Mounted:                   Yes
+   Mount Point:               /System/Volumes/iSCPreboot
+
+   Partition Type:            41504653-0000-11AA-AA11-00306543ECAC
+   File System Personality:   APFS
+   Type (Bundle):             apfs
+   Name (User Visible):       APFS
+   Owners:                    Enabled
+
+   OS Can Be Installed:       No
+   Booter Disk:               disk1s1
+   Recovery Disk:             disk1s4
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Volume UUID:               00000000-0000-4000-8000-000000000005
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000005
+
+   Disk Size:                 524.3 MB (524288000 Bytes) (exactly 1024000 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Volume Used Space:         6.3 MB (6262784 Bytes) (exactly 12232 512-Byte-Units)
+   Container Total Space:     524.3 MB (524288000 Bytes) (exactly 1024000 512-Byte-Units)
+   Container Free Space:      505.1 MB (505114624 Bytes) (exactly 986552 512-Byte-Units)
+   Allocation Block Size:     4096 Bytes
+
+   Media OS Use Only:         Yes
+   Media Read-Only:           No
+   Volume Read-Only:          No
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Hardware AES Support:      Yes
+
+   This disk is an APFS Volume.  APFS Information:
+   APFS Container:            disk1
+   APFS Physical Store:       disk0s1
+   Encrypted:                 No
+   FileVault:                 No
+   Sealed:                    No
+   Locked:                    No
+
+**********
+
+   Device Identifier:         disk1s2
+   Device Node:               /dev/disk1s2
+   Whole:                     No
+   Part of Whole:             disk1
+
+   Volume Name:               Volume 2
+   Mounted:                   Yes
+   Mount Point:               /System/Volumes/xarts
+
+   Partition Type:            41504653-0000-11AA-AA11-00306543ECAC
+   File System Personality:   APFS
+   Type (Bundle):             apfs
+   Name (User Visible):       APFS
+   Owners:                    Enabled
+
+   OS Can Be Installed:       No
+   Booter Disk:               disk1s1
+   Recovery Disk:             disk1s4
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Volume UUID:               00000000-0000-4000-8000-000000000006
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000006
+
+   Disk Size:                 524.3 MB (524288000 Bytes) (exactly 1024000 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Volume Used Space:         6.3 MB (6311936 Bytes) (exactly 12328 512-Byte-Units)
+   Container Total Space:     524.3 MB (524288000 Bytes) (exactly 1024000 512-Byte-Units)
+   Container Free Space:      505.1 MB (505114624 Bytes) (exactly 986552 512-Byte-Units)
+   Allocation Block Size:     4096 Bytes
+
+   Media OS Use Only:         Yes
+   Media Read-Only:           No
+   Volume Read-Only:          No
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Hardware AES Support:      Yes
+
+   This disk is an APFS Volume.  APFS Information:
+   APFS Container:            disk1
+   APFS Physical Store:       disk0s1
+   Encrypted:                 No
+   FileVault:                 No
+   Sealed:                    No
+   Locked:                    No
+
+**********
+
+   Device Identifier:         disk1s3
+   Device Node:               /dev/disk1s3
+   Whole:                     No
+   Part of Whole:             disk1
+
+   Volume Name:               Volume 3
+   Mounted:                   Yes
+   Mount Point:               /System/Volumes/Hardware
+
+   Partition Type:            41504653-0000-11AA-AA11-00306543ECAC
+   File System Personality:   APFS
+   Type (Bundle):             apfs
+   Name (User Visible):       APFS
+   Owners:                    Enabled
+
+   OS Can Be Installed:       No
+   Booter Disk:               disk1s1
+   Recovery Disk:             disk1s4
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Volume UUID:               00000000-0000-4000-8000-000000000007
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000007
+
+   Disk Size:                 524.3 MB (524288000 Bytes) (exactly 1024000 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Volume Used Space:         1.6 MB (1622016 Bytes) (exactly 3168 512-Byte-Units)
+   Container Total Space:     524.3 MB (524288000 Bytes) (exactly 1024000 512-Byte-Units)
+   Container Free Space:      505.1 MB (505114624 Bytes) (exactly 986552 512-Byte-Units)
+   Allocation Block Size:     4096 Bytes
+
+   Media OS Use Only:         Yes
+   Media Read-Only:           No
+   Volume Read-Only:          No
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Hardware AES Support:      Yes
+
+   This disk is an APFS Volume.  APFS Information:
+   APFS Container:            disk1
+   APFS Physical Store:       disk0s1
+   Encrypted:                 No
+   FileVault:                 No
+   Sealed:                    No
+   Locked:                    No
+
+**********
+
+   Device Identifier:         disk1s4
+   Device Node:               /dev/disk1s4
+   Whole:                     No
+   Part of Whole:             disk1
+
+   Volume Name:               Volume 4
+   Mounted:                   No
+
+   Partition Type:            41504653-0000-11AA-AA11-00306543ECAC
+   File System Personality:   APFS
+   Type (Bundle):             apfs
+   Name (User Visible):       APFS
+   Owners:                    Disabled
+
+   OS Can Be Installed:       No
+   Booter Disk:               disk1s1
+   Recovery Disk:             disk1s4
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Volume UUID:               00000000-0000-4000-8000-000000000008
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000008
+
+   Disk Size:                 524.3 MB (524288000 Bytes) (exactly 1024000 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Volume Used Space:         20.5 KB (20480 Bytes) (exactly 40 512-Byte-Units)
+   Container Total Space:     524.3 MB (524288000 Bytes) (exactly 1024000 512-Byte-Units)
+   Container Free Space:      505.1 MB (505114624 Bytes) (exactly 986552 512-Byte-Units)
+
+   Media OS Use Only:         Yes
+   Media Read-Only:           No
+   Volume Read-Only:          Not applicable (not mounted)
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Hardware AES Support:      Yes
+
+   This disk is an APFS Volume.  APFS Information:
+   APFS Container:            disk1
+   APFS Physical Store:       disk0s1
+   Encrypted:                 No
+   FileVault:                 No
+   Sealed:                    No
+   Locked:                    No
+
+**********
+
+   Device Identifier:         disk2
+   Device Node:               /dev/disk2
+   Whole:                     Yes
+   Part of Whole:             disk2
+   Device / Media Name:       APPLE SSD AP0512Z
+
+   Volume Name:               Not applicable (no file system)
+   Mounted:                   Not applicable (no file system)
+   File System:               None
+
+   Content (IOContent):       EF57347C-0000-11AA-AA11-00306543ECAC
+   OS Can Be Installed:       No
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000009
+
+   Disk Size:                 5.4 GB (5368664064 Bytes) (exactly 10485672 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Media OS Use Only:         Yes
+   Media Read-Only:           No
+   Volume Read-Only:          Not applicable (no file system)
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Virtual:                   Yes
+   Hardware AES Support:      Yes
+
+   This disk is an APFS Container.  APFS Information:
+   APFS Physical Store:       disk0s3
+
+**********
+
+   Device Identifier:         disk2s1
+   Device Node:               /dev/disk2s1
+   Whole:                     No
+   Part of Whole:             disk2
+
+   Volume Name:               Volume 4
+   Mounted:                   No
+
+   Partition Type:            41504653-0000-11AA-AA11-00306543ECAC
+   File System Personality:   APFS
+   Type (Bundle):             apfs
+   Name (User Visible):       APFS
+   Owners:                    Disabled
+
+   OS Can Be Installed:       No
+   Recovery Disk:             disk2s1
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Volume UUID:               00000000-0000-4000-8000-000000000010
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000010
+
+   Disk Size:                 5.4 GB (5368664064 Bytes) (exactly 10485672 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Volume Used Space:         2.5 GB (2466533376 Bytes) (exactly 4817448 512-Byte-Units)
+   Container Total Space:     5.4 GB (5368664064 Bytes) (exactly 10485672 512-Byte-Units)
+   Container Free Space:      2.9 GB (2881155072 Bytes) (exactly 5627256 512-Byte-Units)
+
+   Media OS Use Only:         Yes
+   Media Read-Only:           No
+   Volume Read-Only:          Not applicable (not mounted)
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Hardware AES Support:      Yes
+
+   This disk is an APFS Volume.  APFS Information:
+   APFS Container:            disk2
+   APFS Physical Store:       disk0s3
+   Encrypted:                 No
+   FileVault:                 No
+   Sealed:                    No
+   Locked:                    No
+
+**********
+
+   Device Identifier:         disk2s2
+   Device Node:               /dev/disk2s2
+   Whole:                     No
+   Part of Whole:             disk2
+
+   Volume Name:               Volume 5
+   Mounted:                   No
+
+   Partition Type:            41504653-0000-11AA-AA11-00306543ECAC
+   File System Personality:   APFS
+   Type (Bundle):             apfs
+   Name (User Visible):       APFS
+   Owners:                    Disabled
+
+   OS Can Be Installed:       No
+   Recovery Disk:             disk2s1
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Volume UUID:               00000000-0000-4000-8000-000000000011
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000011
+
+   Disk Size:                 5.4 GB (5368664064 Bytes) (exactly 10485672 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Volume Used Space:         1.2 MB (1228800 Bytes) (exactly 2400 512-Byte-Units)
+   Container Total Space:     5.4 GB (5368664064 Bytes) (exactly 10485672 512-Byte-Units)
+   Container Free Space:      2.9 GB (2881155072 Bytes) (exactly 5627256 512-Byte-Units)
+
+   Media OS Use Only:         Yes
+   Media Read-Only:           No
+   Volume Read-Only:          Not applicable (not mounted)
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Hardware AES Support:      Yes
+
+   This disk is an APFS Volume.  APFS Information:
+   APFS Container:            disk2
+   APFS Physical Store:       disk0s3
+   Encrypted:                 No
+   FileVault:                 No
+   Sealed:                    No
+   Locked:                    No
+
+**********
+
+   Device Identifier:         disk3
+   Device Node:               /dev/disk3
+   Whole:                     Yes
+   Part of Whole:             disk3
+   Device / Media Name:       APPLE SSD AP0512Z
+
+   Volume Name:               Not applicable (no file system)
+   Mounted:                   Not applicable (no file system)
+   File System:               None
+
+   Content (IOContent):       EF57347C-0000-11AA-AA11-00306543ECAC
+   OS Can Be Installed:       No
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000012
+
+   Disk Size:                 494.4 GB (494384795648 Bytes) (exactly 965595304 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Media OS Use Only:         No
+   Media Read-Only:           No
+   Volume Read-Only:          Not applicable (no file system)
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Virtual:                   Yes
+   Hardware AES Support:      Yes
+
+   This disk is an APFS Container.  APFS Information:
+   APFS Physical Store:       disk0s2
+
+**********
+
+   Device Identifier:         disk3s1
+   Device Node:               /dev/disk3s1
+   Whole:                     No
+   Part of Whole:             disk3
+
+   Volume Name:               Volume 6
+   Mounted:                   No
+
+   Partition Type:            41504653-0000-11AA-AA11-00306543ECAC
+   File System Personality:   APFS
+   Type (Bundle):             apfs
+   Name (User Visible):       APFS
+   Owners:                    Disabled
+
+   OS Can Be Installed:       No
+   Booter Disk:               disk3s2
+   Recovery Disk:             disk3s3
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Volume UUID:               00000000-0000-4000-8000-000000000013
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000013
+
+   Disk Size:                 494.4 GB (494384795648 Bytes) (exactly 965595304 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Volume Used Space:         12.6 GB (12637614080 Bytes) (exactly 24682840 512-Byte-Units)
+   Container Total Space:     494.4 GB (494384795648 Bytes) (exactly 965595304 512-Byte-Units)
+   Container Free Space:      330.0 GB (330017787904 Bytes) (exactly 644565992 512-Byte-Units)
+
+   Media OS Use Only:         No
+   Media Read-Only:           No
+   Volume Read-Only:          Not applicable (not mounted)
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Hardware AES Support:      Yes
+
+   This disk is an APFS Volume.  APFS Information:
+   APFS Container:            disk3
+   APFS Physical Store:       disk0s2
+   APFS Volume Group:         00000000-0000-4000-8000-000000000014
+   Encrypted:                 No
+   FileVault:                 Yes
+   Sealed:                    Yes
+   Locked:                    No
+
+**********
+
+   Device Identifier:         disk3s1s1
+   Device Node:               /dev/disk3s1s1
+   Whole:                     No
+   Part of Whole:             disk3
+
+   Volume Name:               Volume 6
+   Mounted:                   Yes
+   Mount Point:               /
+
+   Partition Type:            41504653-0000-11AA-AA11-00306543ECAC
+   File System Personality:   APFS
+   Type (Bundle):             apfs
+   Name (User Visible):       APFS
+   Owners:                    Enabled
+
+   OS Can Be Installed:       No
+   Booter Disk:               disk3s2
+   Recovery Disk:             disk3s3
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Volume UUID:               00000000-0000-4000-8000-000000000015
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000015
+
+   Disk Size:                 494.4 GB (494384795648 Bytes) (exactly 965595304 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Volume Used Space:         12.6 GB (12637614080 Bytes) (exactly 24682840 512-Byte-Units)
+   Container Total Space:     494.4 GB (494384795648 Bytes) (exactly 965595304 512-Byte-Units)
+   Container Free Space:      330.0 GB (330017939456 Bytes) (exactly 644566288 512-Byte-Units)
+   Allocation Block Size:     4096 Bytes
+
+   Media OS Use Only:         No
+   Media Read-Only:           Yes
+   Volume Read-Only:          Yes (read-only mount flag set)
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Hardware AES Support:      Yes
+
+   This disk is an APFS Volume Snapshot.  APFS Information:
+   APFS Snapshot Name:        com.apple.os.update-0000000000000000000000000000000000000000000000000000000000000000
+   APFS Snapshot UUID:        00000000-0000-4000-8000-000000000015
+   APFS Container:            disk3
+   APFS Physical Store:       disk0s2
+   APFS Volume Group:         00000000-0000-4000-8000-000000000014
+   EFI Driver In macOS:       2811160007000004
+   Encrypted:                 No
+   FileVault:                 Yes
+   Sealed:                    Yes
+   Locked:                    No
+
+   APFS Snapshots are defined upon this APFS Volume.  Snapshot list:
+   Snapshot UUID:             00000000-0000-4000-8000-000000000015
+   Name:                      com.apple.os.update-0000000000000000000000000000000000000000000000000000000000000000
+   XID:                       1484715
+
+**********
+
+   Device Identifier:         disk3s2
+   Device Node:               /dev/disk3s2
+   Whole:                     No
+   Part of Whole:             disk3
+
+   Volume Name:               Volume 7
+   Mounted:                   Yes
+   Mount Point:               /System/Volumes/Preboot
+
+   Partition Type:            41504653-0000-11AA-AA11-00306543ECAC
+   File System Personality:   APFS
+   Type (Bundle):             apfs
+   Name (User Visible):       APFS
+   Owners:                    Enabled
+
+   OS Can Be Installed:       No
+   Booter Disk:               disk3s2
+   Recovery Disk:             disk3s3
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Volume UUID:               00000000-0000-4000-8000-000000000016
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000016
+
+   Disk Size:                 494.4 GB (494384795648 Bytes) (exactly 965595304 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Volume Used Space:         9.0 GB (9002643456 Bytes) (exactly 17583288 512-Byte-Units)
+   Container Total Space:     494.4 GB (494384795648 Bytes) (exactly 965595304 512-Byte-Units)
+   Container Free Space:      330.0 GB (330017939456 Bytes) (exactly 644566288 512-Byte-Units)
+   Allocation Block Size:     4096 Bytes
+
+   Media OS Use Only:         No
+   Media Read-Only:           No
+   Volume Read-Only:          No
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Hardware AES Support:      Yes
+
+   This disk is an APFS Volume.  APFS Information:
+   APFS Container:            disk3
+   APFS Physical Store:       disk0s2
+   Encrypted:                 No
+   FileVault:                 No
+   Sealed:                    No
+   Locked:                    No
+
+**********
+
+   Device Identifier:         disk3s3
+   Device Node:               /dev/disk3s3
+   Whole:                     No
+   Part of Whole:             disk3
+
+   Volume Name:               Volume 4
+   Mounted:                   No
+
+   Partition Type:            41504653-0000-11AA-AA11-00306543ECAC
+   File System Personality:   APFS
+   Type (Bundle):             apfs
+   Name (User Visible):       APFS
+   Owners:                    Disabled
+
+   OS Can Be Installed:       No
+   Booter Disk:               disk3s2
+   Recovery Disk:             disk3s3
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Volume UUID:               00000000-0000-4000-8000-000000000017
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000017
+
+   Disk Size:                 494.4 GB (494384795648 Bytes) (exactly 965595304 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Volume Used Space:         1.3 GB (1303212032 Bytes) (exactly 2545336 512-Byte-Units)
+   Container Total Space:     494.4 GB (494384795648 Bytes) (exactly 965595304 512-Byte-Units)
+   Container Free Space:      330.0 GB (330017939456 Bytes) (exactly 644566288 512-Byte-Units)
+
+   Media OS Use Only:         No
+   Media Read-Only:           No
+   Volume Read-Only:          Not applicable (not mounted)
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Hardware AES Support:      Yes
+
+   This disk is an APFS Volume.  APFS Information:
+   APFS Container:            disk3
+   APFS Physical Store:       disk0s2
+   Encrypted:                 No
+   FileVault:                 No
+   Sealed:                    No
+   Locked:                    No
+
+**********
+
+   Device Identifier:         disk3s4
+   Device Node:               /dev/disk3s4
+   Whole:                     No
+   Part of Whole:             disk3
+
+   Volume Name:               Volume 5
+   Mounted:                   Yes
+   Mount Point:               /System/Volumes/Update
+
+   Partition Type:            41504653-0000-11AA-AA11-00306543ECAC
+   File System Personality:   APFS
+   Type (Bundle):             apfs
+   Name (User Visible):       APFS
+   Owners:                    Enabled
+
+   OS Can Be Installed:       No
+   Booter Disk:               disk3s2
+   Recovery Disk:             disk3s3
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Volume UUID:               00000000-0000-4000-8000-000000000018
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000018
+
+   Disk Size:                 494.4 GB (494384795648 Bytes) (exactly 965595304 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Volume Used Space:         4.2 MB (4239360 Bytes) (exactly 8280 512-Byte-Units)
+   Container Total Space:     494.4 GB (494384795648 Bytes) (exactly 965595304 512-Byte-Units)
+   Container Free Space:      330.0 GB (330017927168 Bytes) (exactly 644566264 512-Byte-Units)
+   Allocation Block Size:     4096 Bytes
+
+   Media OS Use Only:         Yes
+   Media Read-Only:           No
+   Volume Read-Only:          No
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Hardware AES Support:      Yes
+
+   This disk is an APFS Volume.  APFS Information:
+   APFS Container:            disk3
+   APFS Physical Store:       disk0s2
+   Encrypted:                 No
+   FileVault:                 No
+   Sealed:                    No
+   Locked:                    No
+
+**********
+
+   Device Identifier:         disk3s5
+   Device Node:               /dev/disk3s5
+   Whole:                     No
+   Part of Whole:             disk3
+
+   Volume Name:               Volume 8
+   Mounted:                   Yes
+   Mount Point:               /System/Volumes/Data
+
+   Partition Type:            41504653-0000-11AA-AA11-00306543ECAC
+   File System Personality:   APFS
+   Type (Bundle):             apfs
+   Name (User Visible):       APFS
+   Owners:                    Enabled
+
+   OS Can Be Installed:       Yes
+   Booter Disk:               disk3s2
+   Recovery Disk:             disk3s3
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Volume UUID:               00000000-0000-4000-8000-000000000014
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000014
+
+   Disk Size:                 494.4 GB (494384795648 Bytes) (exactly 965595304 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Volume Used Space:         139.1 GB (139111288832 Bytes) (exactly 271701736 512-Byte-Units)
+   Container Total Space:     494.4 GB (494384795648 Bytes) (exactly 965595304 512-Byte-Units)
+   Container Free Space:      330.0 GB (330017927168 Bytes) (exactly 644566264 512-Byte-Units)
+   Allocation Block Size:     4096 Bytes
+
+   Media OS Use Only:         No
+   Media Read-Only:           No
+   Volume Read-Only:          No
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Hardware AES Support:      Yes
+
+   This disk is an APFS Volume.  APFS Information:
+   APFS Container:            disk3
+   APFS Physical Store:       disk0s2
+   APFS Volume Group:         00000000-0000-4000-8000-000000000014
+   FileVault:                 Yes
+   Sealed:                    No
+   Locked:                    No
+
+**********
+
+   Device Identifier:         disk3s6
+   Device Node:               /dev/disk3s6
+   Whole:                     No
+   Part of Whole:             disk3
+
+   Volume Name:               Volume 9
+   Mounted:                   Yes
+   Mount Point:               /System/Volumes/VM
+
+   Partition Type:            41504653-0000-11AA-AA11-00306543ECAC
+   File System Personality:   APFS
+   Type (Bundle):             apfs
+   Name (User Visible):       APFS
+   Owners:                    Enabled
+
+   OS Can Be Installed:       No
+   Booter Disk:               disk3s2
+   Recovery Disk:             disk3s3
+   Media Type:                Generic
+   Protocol:                  Apple Fabric
+   SMART Status:              Verified
+   Volume UUID:               00000000-0000-4000-8000-000000000019
+   Disk / Partition UUID:     00000000-0000-4000-8000-000000000019
+
+   Disk Size:                 494.4 GB (494384795648 Bytes) (exactly 965595304 512-Byte-Units)
+   Device Block Size:         4096 Bytes
+
+   Volume Used Space:         2.1 GB (2147504128 Bytes) (exactly 4194344 512-Byte-Units)
+   Container Total Space:     494.4 GB (494384795648 Bytes) (exactly 965595304 512-Byte-Units)
+   Container Free Space:      330.0 GB (330017927168 Bytes) (exactly 644566264 512-Byte-Units)
+   Allocation Block Size:     4096 Bytes
+
+   Media OS Use Only:         No
+   Media Read-Only:           No
+   Volume Read-Only:          No
+
+   Device Location:           Internal
+   Removable Media:           Fixed
+
+   Solid State:               Yes
+   Hardware AES Support:      Yes
+
+   This disk is an APFS Volume.  APFS Information:
+   APFS Container:            disk3
+   APFS Physical Store:       disk0s2
+   Encrypted:                 No
+   FileVault:                 No
+   Sealed:                    No
+   Locked:                    No
+
+**********
+

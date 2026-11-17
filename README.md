@@ -169,7 +169,7 @@ Uses sysfs, `/proc/self/mountinfo`, `lsblk`, and optionally `smartctl`.
 
 ### macOS
 
-Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device sysfs stats). APFS snapshot nodes such as the sealed system volume (`disk3s1s1` on `/`) are listed. A disk with no mounted filesystem is not listed yet, and `--check` does not see its SMART (planned for 1.63, see [docs/limitations.md](docs/limitations.md)).
+Uses `diskutil` and `mount`. Throughput columns are always zero (no per-device sysfs stats). APFS snapshot nodes such as the sealed system volume (`disk3s1s1` on `/`) are listed. Every device is listed, mounted or not.
 
 ## Upgrading to 1.62 from 1.61
 
