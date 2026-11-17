@@ -14,12 +14,69 @@ Approved known limitations and deferrals. Reviewers: read this first, and don't 
 - Revisit when: someone runs statblk that way on a host with a dying disk.
 - Approved: 2026-10-29, the user chose "Known limitation (Recommended)".
 
-### `--check` skips the SMART of a disk whose size reads zero
-- Kind: deferred
-- What the operator sees: a device whose size reads 0 is hidden unless `--show_zero_size_devices`, so a plain
-  `statblk --check` does not judge its SMART, and a failing disk that reports zero size passes with exit 0 and no
-  output. `statblk --check --show_zero_size_devices` judges it. 1.63 narrowed this entry to that case: a value
-  statblk could not read no longer drops a row.
-- Why: statblk hides zero-size devices (an empty card-reader slot, empty virtual media) by default. Reproduced with
-  fake commands only, not on a real disk; 1.62 and 1.61 did the same.
-- Revisit when: the user's answer to the zero-size question (docs/progress.md, questions).
+### `--check` does not judge a whole disk whose size reads zero
+- Kind: known limitation
+- What the operator sees: statblk hides a device whose size reads 0 (an empty card-reader slot, empty virtual media) unless `--show_zero_size_devices`. A partition row carries its parent's SMART, so a failing disk is still judged through any partition row that is shown; only a whole disk of size 0 with no partition row shown goes unjudged by a plain `statblk --check` (exit 0, nothing printed). `statblk --check --show_zero_size_devices` judges it.
+- Why: the zero-size rule keeps an empty slot from showing as a disk, and `--check` judges the rows the table shows. Reproduced with fake commands only, not on a real disk; 1.62 and 1.61 did the same. 1.63 narrowed this entry to this case: a value statblk could not read no longer drops a row.
+- Revisit when: someone sees it on a real disk, or measures what smartctl answers for one.
+- Approved: 2026-11-16, chief's decision C78 (the user's desk session; not the user's words): option (1), a known limitation with one README line.
+
+### A command that failed without being stopped is not recorded (deferred, 1.64)
+- Kind: deferred (1.64)
+- What the operator sees: the cut rule and the stderr note count only a command `--timeout` stopped (for `lsblk`, also one still running at the deadline). An `lsblk` that is missing (it has its own note, which the rule does not read) or exits with an error, and a macOS `mount` that fails (non-zero exit, or nothing printed), do not count. So `statblk --check PATTERN` on a Linux host with no working `lsblk`, with a failing disk whose unmounted filesystem the pattern matches only through `lsblk`'s FSTYPE, exits 0 and prints nothing; on macOS a failed `mount` leaves no rows, no note, and `--check` exits 0 over a full filesystem. 1.62 did the same.
+- Why: `cut` is filled for return code 124 (and a still-running `lsblk`) only; a missing `lsblk` is found by `shutil.which` in `main()`; 1.63's `diskutil` `failed` list is one more such record.
+- Plan (1.64): one record of "did not answer in full" per command (stopped, missing or failed), read by the pattern term of the cut rule and by the stderr note; `main()`'s `shutil.which('lsblk')` and the `failed` list go. The cost to weigh: on a host with no `lsblk`, a healthy `statblk --check sda` would then exit 3 until the operator writes `-D sda`.
+
+### `-F` with no `lsblk` does not say why it filters nothing (deferred, 1.64)
+- Kind: deferred (1.64)
+- What the operator sees: no `lsblk`, `statblk -F -o NAME,SIZE` lists unformatted devices (sda, sda1, sdb, sdb1) and stderr is empty. The "lsblk not found" note is printed only when a column `lsblk` fills is shown. 1.62 was silent too.
+- Why: `note_due` in `main()` looks at the shown columns only, and `-F` needs FSTYPE without showing it.
+- Plan (1.64): `note_due` also holds when `-F` is given (`... and (args.formated_only or LSBLK_NOTE_FIELDS.intersection(results[0]))`), with a test.
+
+### macOS: FSTYPE reads `APFS` on an unmounted volume and `apfs` on a mounted one (deferred, 1.64)
+- Kind: deferred (1.64)
+- What the operator sees: `statblk` shows `apfs` (from `mount`) for disk3s5 and `APFS` (diskutil's File System Personality) for the unmounted disk3s3, so `statblk apfs` lists only the mounted volumes and `statblk APFS` only the unmounted ones. New to see in 1.63, because 1.62 listed no unmounted volume.
+- Why: `get_macos_diskutil_info()` takes FSTYPE from File System Personality.
+- Plan (1.64): take FSTYPE from `Type (Bundle)` (all 13 volumes of the test capture have it, and it is the word `mount` prints), falling back to File System Personality; with a test on the capture.
+
+### macOS: a `Volume Total Space` line overrides a size of 0 (deferred, 1.64)
+- Kind: deferred (1.64)
+- What the operator sees: a device with `Disk Size: 0 B` and a later `Volume Total Space` line gets the volume's size and is listed, where the rule says a size of 0 hides it. The test capture (macOS 26) has no `Volume Total Space` line, so this can only show on another macOS, and the fallback itself has no test.
+- Why: `get_macos_diskutil_info()` treats a parsed 0 as "no size yet" (`if not size_bytes ...`).
+- Plan (1.64): `if size_bytes is None ...`, with two cases in `test_diskutil_size_none_when_it_gave_none` (only `Volume Total Space`; `Disk Size` 0 plus `Volume Total Space`), or drop the fallback if no macOS that prints it can be named.
+
+### Linux: `-F` drops a partition that `lsblk` answered without (deferred, 1.64)
+- Kind: deferred (1.64)
+- What the operator sees: `lsblk` exits 0 but does not list a device (a partition that appeared after it ran, or a name it prints differently): `-F` drops that device's row for a blank FSTYPE that was never read, and `--check -F` does not judge its disk through it. 1.62 did the same.
+- Why: "answered in full" is one flag for the whole `lsblk` output on Linux; macOS asks per device (`device_name in macos_info`).
+- Plan (1.64): a per-device answer on Linux too (`device_name in` what `lsblk` listed), with a test.
+
+### Linux: an unreadable sysfs size or stat reads as 0 (deferred, 1.64)
+- Kind: deferred (1.64)
+- What the operator sees: with `lsblk` stopped or missing, a sysfs `size` that cannot be read (a device that vanished between the listing and the read) reads as 0 and drops the row; `-A` drops a device whose sysfs `stat` cannot be read as idle. A failing disk that is only that row exits 0. A race, so rare. 1.62 did the same.
+- Why: `read_int()` returns 0 on any failure, and the throughput iterator yields `0, 0`.
+- Plan (1.64): both give None for "not read", as macOS's size does, and the filters drop only a value that was read; with tests that force the failure.
+
+### Linux: `-A` drops the `-P` pseudo rows (deferred, 1.64)
+- Kind: deferred (1.64)
+- What the operator sees: `statblk -A -P` drops every pseudo filesystem row (tmpfs, nfs...) because they have no throughput iterator, while macOS keeps them. 1.62 did the same.
+- Why: the `-A` test is `device_name not in tptDict`, true for a mount that is no block device.
+- Plan (1.64): `-A` filters only devices that have a throughput to read.
+
+### macOS: a mount source with a space is not read (deferred, 1.64)
+- Kind: deferred (1.64)
+- What the operator sees: with `-P`, a network mount whose source has a space (`//user@server/My Share on /Volumes/My Share (smbfs, ...)`) never becomes a row.
+- Why: `parse_darwin_mount_line()` reads the source as one word (`\S+`).
+- Plan (1.64): read the source up to ` on `, with a test on that line.
+
+### macOS: READ and WRITE show `0 B/s` that was never read (deferred, 1.64)
+- Kind: deferred (1.64)
+- What the operator sees: READ and WRITE on macOS read `0 B/s` for every device, a number statblk did not measure, and `-J` gives 0 for it.
+- Why: the throughput iterator yields `0, 0` on macOS, and `-A` already treats it as unread (1.63).
+- Plan (1.64): blank cells (`null` in `-J`) on macOS, so the table says what it did not read.
+
+### The macOS test of a silent `diskutil` and `mount` has a thin time margin (deferred, 1.64)
+- Kind: deferred (1.64)
+- What the operator sees: nothing; on the test Mac `test_a_silent_diskutil_and_mount_are_stopped_and_recorded` failed once on a first run (and passed in 19 further runs), because it gives the fake commands 0.3 s to print a first line, and a fresh script there takes 0.09 to 0.12 s to print it. The cause is likely, not proven: the measured latency explains a margin of 3x, not the one run over 0.3 s.
+- Why: the comment in the test says 15 times what the test needs, which holds on Linux (0.02 s measured) and not on the Mac.
+- Plan (1.64): a test-only fix with a margin measured on the Mac, and the comment corrected.

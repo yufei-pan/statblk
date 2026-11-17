@@ -1050,7 +1050,8 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 
 	A filter drops a row only on a value that was read: a SIZE diskutil did not give is not a zero size, a blank
 	FSTYPE whose source did not answer in full is not "no filesystem", and macOS throughput, which is never read, is
-	not idle. Such a row stays, its cell blank."""
+	not idle. Such a row stays: SIZE or FSTYPE blank, READ and WRITE 0 on macOS. A mount whose statvfs failed stays
+	too, with SIZE blank and FSUSE% ERROR (one that hung: TIMEOUT)."""
 	global _DEBUG_MODE
 	if debug:
 		_DEBUG_MODE = True
@@ -1407,7 +1408,7 @@ def main():
 	parser.add_argument('-t','--timeout', help="Set command timeout in seconds (default: 2; 0: no limit)", default=2, type=float)
 	parser.add_argument('-w','--watch', metavar='SECONDS', type=float, default=None,
 						help="Repeat output every SECONDS (watch mode). Equivalent to a trailing integer positional.")
-	parser.add_argument('--check', help="Health check: print rows with a problem (SMART failing, FSUSE%% >= --max_use, hung mount; exit 1), else print nothing (no rows, with -j or -J) and exit 0. Unknown, with no problem found, is exit 3: SMART unreadable (rows printed), or a command --timeout stopped that can hide what is checked (named on stderr)", action="store_true")
+	parser.add_argument('--check', help="Health check: print rows with a problem (SMART failing, FSUSE%% >= --max_use, hung mount; exit 1), else print nothing (with -j or -J, a result with no rows) and exit 0. Unknown, with no problem found, is exit 3: SMART unreadable or a mount whose use statvfs could not read (rows printed), or a command --timeout stopped that can hide what is checked (named on stderr)", action="store_true")
 	parser.add_argument('--max_use', metavar='PCT', type=int, default=90, help="FSUSE%% at or above which --check reports a filesystem (default: 90)")
 	parser.add_argument('--sudo', help="Run commands as root with sudo. Needed for querying SMART info.", action="store_true")
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")

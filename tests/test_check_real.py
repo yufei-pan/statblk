@@ -192,6 +192,14 @@ def test_mac_disk_whose_size_reads_zero_is_checked_only_when_shown(monkeypatch, 
     assert _run(monkeypatch, capsys, ["--check", "-t", "2"] + argv, run) == expected
 
 
+def test_mac_zero_size_whole_disk_is_judged_through_its_partitions(monkeypatch, capsys):
+    # Only disk0 reads 0: its partition rows are shown and carry its SMART, so the known limitation (a whole disk
+    # of size 0 with no partition row to show) does not apply.
+    zeroed = _zero_size(MACOS26_DISKUTIL, ["/dev/disk0"])
+    run = _mac(monkeypatch, "/dev/disk0", diskutil=(zeroed, 0))
+    assert _run(monkeypatch, capsys, ["--check", "-t", "2"], run) == (1, DISK0[1:], "T\n", "")
+
+
 # An empty slot (a card reader with no card) has no SMART to read. diskutil says "Disk Size: Not applicable (no
 # media)", which reads as a size of 0, so it is hidden and a healthy Mac stays healthy.
 EMPTY_SLOT = ["", "   Device Identifier:         disk9", "   Device Node:               /dev/disk9", "",
@@ -356,6 +364,13 @@ def test_linux_disk_whose_size_reads_zero_is_checked_only_when_shown(monkeypatch
     lsblk = [line.replace('SIZE="1073741824"', 'SIZE="0"') if "sdb" in line else line for line in LSBLK]
     run = _linux(monkeypatch, tmp_path, "/dev/sdb", lsblk=(lsblk, 0))
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run) == expected
+
+
+def test_linux_zero_size_whole_disk_is_judged_through_its_partition(monkeypatch, capsys, tmp_path):
+    # Only sdb reads 0: sdb1's row is shown and carries sdb's SMART (the known limitation needs no partition row).
+    lsblk = [line.replace('SIZE="1073741824"', 'SIZE="0"') if 'NAME="/dev/sdb"' in line else line for line in LSBLK]
+    run = _linux(monkeypatch, tmp_path, "/dev/sdb", lsblk=(lsblk, 0))
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"], run) == (1, ["sdb1"], "T\n", "")
 
 
 @STATVFS_ERRORS
