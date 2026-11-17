@@ -48,6 +48,9 @@ def _run(monkeypatch, capsys, argv, run_command, usage=(1000, 350, 650)):
 
 
 def _smartctl(command, failing, unreadable=None):
+    # Every device not named answers PASSED. disk1 to disk3 of the capture are virtual (APFS containers): whether
+    # smartctl on a real Mac answers for them is not verified (the test Mac has no smartctl); an UNKNOWN there would
+    # make a real --check exit 3 where these tests say 0.
     if unreadable and command.endswith(" " + unreadable):
         return FakeCmdResult(["Unable to detect device type"])  # no verdict: SMART UNKNOWN
     verdict = "FAILED!" if command.endswith(" " + failing) else "PASSED"
