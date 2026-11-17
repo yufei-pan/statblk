@@ -545,25 +545,24 @@ def _statvfs_with_timeout(mountpoint, timeout):
 def get_statvfs_use_size(mountpoint, timeout=None):
 	"""Return (total_bytes, used_bytes, avail_bytes) like GNU df, or None if
 	statvfs did not answer within `timeout` seconds (None = wait forever).
+	An error statvfs answers with (EIO, a dead FUSE mount, a directory this user cannot search) is raised: it is
+	no size of 0.
 
 	used = (f_blocks - f_bfree) * frsize  — actual allocated blocks, not counting
 	root-reserved space as used. avail = f_bavail * frsize (space non-root can use).
 	FSUSE% should be used / (used + avail), matching df Use%.
 	"""
-	try:
-		if timeout is None:
-			st = os.statvfs(mountpoint)
-		else:
-			st = _statvfs_with_timeout(mountpoint, timeout)
-			if st is None:
-				return None
-		block_size = st.f_frsize if st.f_frsize > 0 else st.f_bsize
-		total = st.f_blocks * block_size
-		avail = st.f_bavail * block_size
-		used = (st.f_blocks - st.f_bfree) * block_size
-		return total, used, avail
-	except Exception:
-		return 0, 0, 0
+	if timeout is None:
+		st = os.statvfs(mountpoint)
+	else:
+		st = _statvfs_with_timeout(mountpoint, timeout)
+		if st is None:
+			return None
+	block_size = st.f_frsize if st.f_frsize > 0 else st.f_bsize
+	total = st.f_blocks * block_size
+	avail = st.f_bavail * block_size
+	used = (st.f_blocks - st.f_bfree) * block_size
+	return total, used, avail
 
 def read_discard_support(sysfs_block_path):
 	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
@@ -1207,11 +1206,17 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 					continue
 				device_properties['MOUNTPOINT'] = mount_entry.MOUNTPOINT
 				statvfs_wait = None if deadline is None else max(_remaining(deadline), STATVFS_MIN_WAIT)
-				usage = get_statvfs_use_size(device_properties['MOUNTPOINT'], timeout=statvfs_wait)
+				try:
+					usage = get_statvfs_use_size(device_properties['MOUNTPOINT'], timeout=statvfs_wait)
+					not_read = 'TIMEOUT'  # statvfs gave no answer in time
+				except Exception as e:
+					debug_exc('statvfs', e)
+					usage, not_read = None, 'ERROR'  # statvfs answered with an error
 				if usage is None:
-					# Hung network mount: always show it, it's what you'd want to see.
+					# A hung or failing mount: always show it, it's what you'd want to see. No size was read, which is
+					# not a size of 0, so the row stays and FSUSE% says why it has no number.
 					device_properties['SIZE'] = ''
-					device_properties['FSUSE%'] = 'TIMEOUT'
+					device_properties['FSUSE%'] = not_read
 					output_list.append([device_properties[output_field] for output_field in output_fields])
 					continue
 				size_bytes, used_bytes, avail_bytes = usage
@@ -1287,10 +1292,10 @@ def drop_empty_columns(rows):
 	return [[row[i] for i in keep] for row in rows]
 
 def _parse_percent(value):
-	"""FSUSE% cell to an int percent, or None for '', N/A or TIMEOUT.
+	"""FSUSE% cell to an int percent, or None for '', N/A, TIMEOUT or ERROR.
 
-	>>> _parse_percent('35%'), _parse_percent('N/A'), _parse_percent('TIMEOUT')
-	(35, None, None)
+	>>> _parse_percent('35%'), _parse_percent('N/A'), _parse_percent('TIMEOUT'), _parse_percent('ERROR')
+	(35, None, None, None)
 	"""
 	return int(value[:-1]) if value.endswith('%') and value[:-1].isdigit() else None
 
@@ -1309,8 +1314,9 @@ def check_rows(rows, max_use):
 
 	A problem (status 1) is SMART that isn't healthy or unknown (FAILED!,
 	vendor failure text, a hung smartctl), FSUSE% at or above max_use, or a
-	mount that timed out. Otherwise SMART that couldn't be read (status 3)
-	is reported, since a blank result would hide that the disk wasn't checked.
+	mount that timed out. Otherwise SMART that couldn't be read, or a mount
+	whose use statvfs failed to read (FSUSE% ERROR), is reported (status 3),
+	since a blank result would hide that it wasn't checked.
 	A check whose column is missing (excluded with -x) is skipped.
 
 	>>> rows = [['NAME', 'FSUSE%', 'SMART'], ['sda1', '42%', 'OK'], ['sda2', '95%', 'OK'], ['sdb', '', 'UNKNOWN']]
@@ -1318,6 +1324,8 @@ def check_rows(rows, max_use):
 	([['NAME', 'FSUSE%', 'SMART'], ['sda2', '95%', 'OK'], ['sdb', '', 'UNKNOWN']], 1)
 	>>> check_rows([rows[0], rows[1], rows[3]], 90)
 	([['NAME', 'FSUSE%', 'SMART'], ['sdb', '', 'UNKNOWN']], 3)
+	>>> check_rows([rows[0], ['sda3', 'ERROR', 'OK']], 90)
+	([['NAME', 'FSUSE%', 'SMART'], ['sda3', 'ERROR', 'OK']], 3)
 	"""
 	if not rows:
 		return rows, CHECK_OK
@@ -1331,7 +1339,8 @@ def check_rows(rows, max_use):
 				return CHECK_PROBLEM
 		if smart_i is not None and row[smart_i] not in SMART_HEALTHY:
 			return CHECK_UNKNOWN if row[smart_i] in SMART_UNKNOWN else CHECK_PROBLEM
-		return CHECK_OK
+		# statvfs failed on the mount: its use was not read (the disk's SMART above still counts)
+		return CHECK_UNKNOWN if use_i is not None and row[use_i] == 'ERROR' else CHECK_OK
 	statuses = [row_status(row) for row in rows[1:]]
 	reported = [header] + [row for row, st in zip(rows[1:], statuses) if st != CHECK_OK]
 	if CHECK_PROBLEM in statuses:

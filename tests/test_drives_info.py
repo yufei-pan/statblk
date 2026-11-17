@@ -1,3 +1,4 @@
+import errno
 from collections import defaultdict
 
 import pytest
@@ -457,6 +458,24 @@ def test_hung_mount_shown_as_timeout(monkeypatch):
     _patch_multicmd(monkeypatch, FakeCmdResult([], 0))
     rows = statblk.get_drives_info(output="NAME,SIZE,FSUSE%,MOUNTPOINT", timeout=2)
     assert rows[1:] == [["sda1", "", "TIMEOUT", "/mnt/nfs-gone"]]
+
+
+@pytest.mark.parametrize("error", [OSError(errno.EIO, "Input/output error"), PermissionError(errno.EACCES, "denied")],
+                         ids=["EIO", "PermissionError"])
+def test_mount_whose_statvfs_fails_shown_as_error(monkeypatch, error):
+    # Not a zero-size filesystem (dropped) and not a hang (TIMEOUT): the row stays, with no size and FSUSE% ERROR.
+    mounts = _mount_table("/dev/sda1", "/mnt/dead")
+    _patch_linux_basics(monkeypatch, mounts=mounts)
+
+    def failing(mountpoint, timeout=None):
+        raise error
+
+    monkeypatch.setattr(statblk, "get_statvfs_use_size", failing)
+    _patch_multicmd(monkeypatch, FakeCmdResult([], 0))
+    rows = statblk.get_drives_info(output="NAME,SIZE,FSUSE%,MOUNTPOINT", timeout=2)
+    assert rows[1:] == [["sda1", "", "ERROR", "/mnt/dead"]]
+    rows = statblk.get_drives_info(output="NAME,SIZE,FSUSE%,MOUNTPOINT", timeout=2, print_bytes=True)
+    assert statblk.rows_to_objects(rows) == [{"NAME": "sda1", "SIZE": None, "FSUSE%": None, "MOUNTPOINT": "/mnt/dead"}]
 
 
 def test_autofs_mounts_ignored(tmp_path, monkeypatch):

@@ -39,6 +39,17 @@ def test_unreadable_smart_is_unknown(smart):
     assert statblk.check_rows([HEADER, row], 90) == ([HEADER, row], 3)
 
 
+@pytest.mark.parametrize("smart, status", [
+    ("OK", 3),  # statvfs failed on the mount: its use was not read
+    ("", 3),
+    ("FAILED!", 1),  # the disk's own failure is still a problem
+    ("UNKNOWN", 3),
+])
+def test_failed_statvfs_is_unknown_unless_the_disk_fails(smart, status):
+    row = ["sda1", "ERROR", smart]
+    assert statblk.check_rows([HEADER, row], 90) == ([HEADER, row], status)
+
+
 def test_problem_beats_unknown_and_both_reported():
     rows = [HEADER, ["sda1", "95%", "OK"], ["sdb", "", "UNKNOWN"], ["sdc", "10%", "OK"]]
     assert statblk.check_rows(rows, 90) == ([HEADER, rows[1], rows[2]], 1)
@@ -168,8 +179,8 @@ def test_check_exclude_smart_is_space_only(monkeypatch):
 
 def _run_main_cut(monkeypatch, argv, rows, cut):
     """main() whose get_drives_info reports `cut` (commands --timeout stopped); return (exit value, printed tables).
-    What a stopped command does to the exit is tested through the real get_drives_info in test_check_real.py; these
-    tests are about what main() prints."""
+    What a stopped command does to the exit is tested through the real get_drives_info in test_check_real.py (one
+    case per cell of the cut rule); these tests are about what main() prints."""
     tables = []
 
     def gdi(**k):
