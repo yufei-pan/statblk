@@ -1409,7 +1409,7 @@ def main():
 	parser.add_argument('-t','--timeout', help="Set command timeout in seconds (default: 2; 0: no limit)", default=2, type=float)
 	parser.add_argument('-w','--watch', metavar='SECONDS', type=float, default=None,
 						help="Repeat output every SECONDS (watch mode). Equivalent to a trailing integer positional.")
-	parser.add_argument('--check', help="Health check: print rows with a problem (SMART failing, FSUSE%% >= --max_use, hung mount; exit 1), else print nothing (with -j or -J, a result with no rows) and exit 0. Unknown, with no problem found, is exit 3: SMART unreadable or a mount whose use statvfs could not read (rows printed), or a command --timeout stopped that can hide what is checked (named on stderr)", action="store_true")
+	parser.add_argument('--check', help="Health check: print the rows that need attention, and exit 1 if one has a problem (SMART failing, FSUSE%% >= --max_use, hung mount), else 3 if one could not be checked (SMART unreadable, FSUSE%% ERROR) or a command that can hide what is checked did not answer in full (named on stderr); when all is healthy, print nothing (-j: the header row, -J: []) and exit 0", action="store_true")
 	parser.add_argument('--max_use', metavar='PCT', type=int, default=90, help="FSUSE%% at or above which --check reports a filesystem (default: 90)")
 	parser.add_argument('--sudo', help="Run commands as root with sudo. Needed for querying SMART info.", action="store_true")
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")

@@ -287,3 +287,13 @@ def test_help_and_readme_say_timeout_zero_means_no_limit():
     timeout_row = next(line for line in (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
                        if line.startswith("| `-t`, `--timeout`"))
     assert "0: no limit" in timeout_row
+
+
+def test_check_help_says_what_a_healthy_json_check_prints():
+    # A healthy --check prints the header row with -j and [] with -J (test_check.py, test_check_json_when_healthy).
+    help_text = " ".join(subprocess.run(
+        [sys.executable, str(ROOT / "statblk.py"), "--help"],
+        stdout=subprocess.PIPE, universal_newlines=True, check=True,
+    ).stdout.split())
+    assert "-j: the header row, -J: []" in help_text
+    assert "print the rows that need attention, and exit 1 if one has a problem" in help_text

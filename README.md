@@ -107,7 +107,7 @@ From the second watch refresh on, READ / WRITE are **live rates**: bytes transfe
 |------|-------------|
 | `-t`, `--timeout` | Time budget per refresh in seconds for `lsblk`, `smartctl` and `statvfs`; on macOS, how long `diskutil` and `mount` may each go without output (default: 2; fractions allowed; 0: no limit). A command it stops (`lsblk`, `diskutil`, `mount`) is named on stderr, with what it leaves missing, and so is one that is not found or fails (with `--check`, only when the run exits `1` or `3`) |
 | `-w`, `--watch SECONDS` | Repeat output every SECONDS (watch mode; fractions allowed, e.g. `0.5`) |
-| `--check` | Health check: print only the rows that need attention (exit 1 problem, 3 unknown), or print nothing (with `-j` / `-J`, a result with no rows) and exit 0 (see [Health check](#health-check)) |
+| `--check` | Health check: print only the rows that need attention (exit 1 problem, 3 unknown), or print nothing (`-j`: the header row, `-J`: `[]`) and exit 0 (see [Health check](#health-check)) |
 | `--max_use PCT` | FSUSE% at or above which `--check` reports a filesystem (default: 90) |
 | `--sudo` | Run external commands via `sudo` (needed for SMART on many systems). `smartctl` is also looked up in `/usr/sbin`, `/sbin`, `/usr/local/sbin` when it isn't on `PATH` |
 | `--debug` | Print suppressed exceptions to stderr |
@@ -138,7 +138,7 @@ statblk -w 0 nvme0 # same via flag
 
 ### Health check
 
-`--check` runs once and prints only the rows that need attention; when everything is healthy it prints nothing (with `-j` or `-J`, a result with no rows, as in 1.61), so cron only mails on trouble. Exit status:
+`--check` runs once and prints only the rows that need attention; when everything is healthy it prints nothing (with `-j`, the header row alone; with `-J`, `[]`; as in 1.61), so cron only mails on trouble. Exit status:
 
 | Exit | Meaning |
 |------|---------|
