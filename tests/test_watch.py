@@ -101,7 +101,8 @@ def test_single_run_json_stays_indented(monkeypatch, capsys, flag):
     json.loads(out)
 
 
-# What get_drives_info records on a host with no lsblk (multiCMD's 127) when a shown column, or -F, needs it.
+# What get_drives_info records on a host with no lsblk (multiCMD's 127) when FSTYPE, UUID, MODEL or SERIAL is shown
+# or collected, or -F needs it.
 NO_LSBLK = ({"lsblk": statblk.NOT_FOUND_RETURNCODE},)
 LSBLK_NOTE = statblk.cut_note("lsblk", 2, statblk.NOT_FOUND_RETURNCODE)
 
@@ -123,7 +124,7 @@ def test_missing_lsblk_noted_under_every_redrawn_table(monkeypatch, capsys):
     assert capsys.readouterr().err.count("lsblk not found") == 3
 
 
-def test_no_lsblk_note_when_lsblk_answered(monkeypatch, capsys):
+def test_no_note_when_nothing_was_unanswered(monkeypatch, capsys):
     _run(monkeypatch, ["statblk", "-w", "2"], tty=True, refreshes=2)
     assert "lsblk" not in capsys.readouterr().err
 

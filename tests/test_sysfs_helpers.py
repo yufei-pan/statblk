@@ -77,6 +77,13 @@ def test_find_command_falls_back_to_sbin_dirs(tmp_path, monkeypatch):
     assert statblk.find_command("smartctl", fallback_dirs=[str(sbin)]) == str(smartctl)
 
 
+def test_find_command_default_fallback_is_the_sbin_dirs():
+    # DISKUTIL_PATH and MOUNT_PATH rely on the default under macOS cron's PATH; the default is bound when the function
+    # is defined, so it can't be monkeypatched.
+    assert {"/usr/sbin", "/sbin"} <= set(statblk.SBIN_DIRS)
+    assert statblk.find_command.__defaults__ == (statblk.SBIN_DIRS,)
+
+
 def test_find_command_prefers_path(tmp_path, monkeypatch):
     user_bin = tmp_path / "bin"
     user_bin.mkdir()

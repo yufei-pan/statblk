@@ -83,9 +83,16 @@ def test_parse_smart_health_idle_is_not_standby():
 
 
 def test_mountinfo_source_outside_dev_is_kept_as_written():
-    # realpath read the SMB share //server/share as the path /server/share; a /dev source still has its links resolved.
+    # realpath read the SMB share //server/share as the path /server/share.
     dev, ent = statblk.parse_mountinfo_line("120 99 0:55 / /mnt/share rw - cifs //server/share rw,vers=3.1.1")
     assert dev == "//server/share" and ent.MOUNTPOINT == "/mnt/share"
+
+
+def test_mountinfo_source_under_dev_has_its_links_resolved(monkeypatch):
+    # /dev/mapper/vg-lv is a link to /dev/dm-0: the mount joins its device's row under the kernel name.
+    monkeypatch.setattr(statblk.os.path, "realpath", lambda p: "/dev/dm-0" if p == "/dev/mapper/vg-lv" else p)
+    dev, ent = statblk.parse_mountinfo_line("100 99 253:0 / /data rw - ext4 /dev/mapper/vg-lv rw")
+    assert dev == "/dev/dm-0" and ent.MOUNTPOINT == "/data"
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="mountinfo is Linux's, and macOS names are UTF-8 only")
@@ -108,10 +115,11 @@ def test_mountinfo_utf8_mount_point_reaches_statvfs_in_the_c_locale(tmp_path):
     # Python 3.6 in the C locale (EL7 and EL8 under cron) encodes paths as ASCII: a UTF-8 mount point read as UTF-8
     # could not be encoded for statvfs. Read as the filesystem encoding reads paths, it goes back as the same bytes.
     # (Python 3.7 and later take the C locale for UTF-8, where both ways work.)
-    target = tmp_path / "caf\u00e9"
-    target.mkdir()
+    # The directory is made from bytes, so a runner in the C locale (Python 3.6 would not encode "caf\u00e9") works too.
+    target = os.path.join(os.fsencode(str(tmp_path)), "caf\u00e9".encode("utf-8"))
+    os.mkdir(target)
     mountinfo = tmp_path / "mountinfo"
-    mountinfo.write_bytes(b"100 99 8:1 / " + os.fsencode(str(target)) + b" rw - ext4 /dev/sdz1 rw\n")
+    mountinfo.write_bytes(b"100 99 8:1 / " + target + b" rw - ext4 /dev/sdz1 rw\n")
     code = ("import statblk; statblk.IS_DARWIN = False; statblk.MOUNTINFO_PATH = %r; "
             "(e,) = statblk.parseMount()['/dev/sdz1']; print(statblk.get_statvfs_use_size(e.MOUNTPOINT) is not None)"
             % str(mountinfo))

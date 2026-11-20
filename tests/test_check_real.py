@@ -160,14 +160,13 @@ def test_mac_mount_stopped_hides_a_full_filesystem_as_unknown_not_healthy(monkey
 
 
 @DID_NOT_ANSWER
-def test_mac_mount_that_did_not_answer_is_unknown_over_a_full_filesystem_or_a_failing_disk(monkeypatch, capsys,
-                                                                                            returncode):
+def test_mac_mount_that_did_not_answer_is_unknown_not_healthy(monkeypatch, capsys, returncode):
     # 1.63 counted only a mount the timeout stopped: one that failed or was not found (cron's PATH has no /sbin; see
-    # find_command) left FSUSE% blank and exited 0 over a full filesystem, and with -M over a failing disk.
-    full = (1000, 950, 50)
+    # find_command) left the mounts unknown and exited 0, and with -M over a failing disk. (No mount rows, so no
+    # statvfs: the stopped case above is the one over a full filesystem.)
     run = _mac(monkeypatch, "/dev/none", mount=([], returncode))
     note = _cut_line("mount", 2, returncode)
-    assert _run(monkeypatch, capsys, ["--check", "-t", "2"], run, usage=full) == (3, [], "", note)
+    assert _run(monkeypatch, capsys, ["--check", "-t", "2"], run) == (3, [], "", note)
     run = _mac(monkeypatch, "/dev/disk3", mount=([], returncode))
     assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-M"], run) == (3, [], "", note)
 

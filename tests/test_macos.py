@@ -100,7 +100,7 @@ def test_diskutil_volume_total_space_only_without_a_disk_size(monkeypatch, disk_
     ("   Type (Bundle):             msdos", "   File System Personality:   MS-DOS FAT32", "msdos"),
     (None, "   File System Personality:   ExFAT", "ExFAT"),  # no Type (Bundle): the personality, as 1.63 read it
 ], ids=["both", "personality only"])
-def test_diskutil_fstype_is_the_word_mount_prints(monkeypatch, bundle, personality, expected):
+def test_diskutil_fstype_is_the_word_mount_prints_or_the_personality_when_there_is_no_type(monkeypatch, bundle, personality, expected):
     lines = ["   Device Node:               /dev/disk5", personality] + ([bundle] if bundle else [])
     assert _diskutil_info(monkeypatch, lines)["/dev/disk5"]["FSTYPE"] == expected
 
@@ -384,7 +384,7 @@ def test_darwin_formated_only_keeps_a_device_diskutil_did_not_describe(monkeypat
 
 
 def test_darwin_active_only_drops_nothing(monkeypatch):
-    # macOS has no per-device throughput to read: READ and WRITE show 0, which is not "idle".
+    # macOS has no per-device throughput to read: READ and WRITE are blank (not read), which is not "idle".
     _darwin_machine(monkeypatch)
     rows = statblk.get_drives_info(output="NAME,READ", active_only=True, pseudo=True, timeout=2)
     assert _names(rows)[:len(ALL_NAMES)] == ALL_NAMES and "devfs" in _names(rows)
