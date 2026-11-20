@@ -34,7 +34,7 @@ def test_get_macos_diskutil_info_reads_every_section(monkeypatch):
     info = _diskutil_info(monkeypatch, MACOS26_DISKUTIL)
     assert sorted(info) == sorted(MACOS26_DEV)
     assert all(d["SIZE_BYTES"] for d in info.values())
-    assert sum(d["FSTYPE"] == "APFS" for d in info.values()) == 13
+    assert sum(d["FSTYPE"] == "apfs" for d in info.values()) == 13  # Type (Bundle), the word mount prints
     assert info["/dev/disk0"] == {"SIZE_BYTES": 500277792768, "FSTYPE": "", "UUID": "", "LABEL": "",
                                   "MODEL": "APPLE SSD AP0512Z", "SERIAL": "", "DISCARD": "Yes"}
     assert info["/dev/disk3s5"]["LABEL"] == "Volume 8"
@@ -51,6 +51,37 @@ def test_diskutil_size_none_when_it_gave_none(monkeypatch, size_line, expected):
     lines = ["   Device Identifier:         disk5", "   Device Node:               /dev/disk5", "",
              "   Solid State:               No"] + ([size_line] if size_line else [])
     assert _diskutil_info(monkeypatch, lines)["/dev/disk5"]["SIZE_BYTES"] == expected
+
+
+VOLUME_TOTAL = "   Volume Total Space:        2.0 GB (2000000000 Bytes) (exactly 3906250 512-Byte-Units)"
+
+
+@pytest.mark.parametrize("disk_size, expected", [
+    (None, 2000000000),  # no Disk Size: Volume Total Space is the size (1.38's fallback, for an older macOS)
+    ("   Disk Size:                 0 B (0 Bytes) (exactly 0 512-Byte-Units)", 0),  # a Disk Size of 0 is a size given
+    ("   Disk Size:                 1.0 GB (1000000000 Bytes) (exactly 1953125 512-Byte-Units)", 1000000000),
+], ids=["only Volume Total Space", "Disk Size 0", "Disk Size"])
+def test_diskutil_volume_total_space_only_without_a_disk_size(monkeypatch, disk_size, expected):
+    lines = ["   Device Node:               /dev/disk5"] + ([disk_size] if disk_size else []) + [VOLUME_TOTAL]
+    assert _diskutil_info(monkeypatch, lines)["/dev/disk5"]["SIZE_BYTES"] == expected
+
+
+@pytest.mark.parametrize("bundle, personality, expected", [
+    ("   Type (Bundle):             msdos", "   File System Personality:   MS-DOS FAT32", "msdos"),
+    (None, "   File System Personality:   ExFAT", "ExFAT"),  # no Type (Bundle): the personality, as 1.63 read it
+], ids=["both", "personality only"])
+def test_diskutil_fstype_is_the_word_mount_prints(monkeypatch, bundle, personality, expected):
+    lines = ["   Device Node:               /dev/disk5", personality] + ([bundle] if bundle else [])
+    assert _diskutil_info(monkeypatch, lines)["/dev/disk5"]["FSTYPE"] == expected
+
+
+def test_a_pattern_matches_mounted_and_unmounted_volumes_alike(monkeypatch):
+    # 1.63 read APFS for the unmounted disk3s3 (File System Personality) and apfs for the mounted disk3s5 (mount), so
+    # `statblk apfs` missed every unmounted volume.
+    _darwin_machine(monkeypatch)
+    rows = statblk.get_drives_info(output="NAME,FSTYPE,MOUNTPOINT", filter_patterns=["^apfs$"], timeout=2)
+    assert {r[1] for r in rows[1:]} == {"apfs"}
+    assert len(rows) - 1 == 13 and ["disk3s3", "apfs", ""] in rows and ["disk3s5", "apfs", "/System/Volumes/Data"] in rows
 
 
 def test_diskutil_stopped_mid_device_keeps_what_it_read(monkeypatch):

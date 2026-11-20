@@ -21,20 +21,6 @@ Approved known limitations and deferrals. Reviewers: read this first, and don't 
 - Revisit when: someone sees it on a real disk, or measures what smartctl answers for one.
 - Approved: 2026-11-16, chief's decision C78 (the user's desk session; not the user's words): option (1), a known limitation with one README line.
 
-### macOS: FSTYPE reads `APFS` on an unmounted volume and `apfs` on a mounted one (deferred, 1.64)
-- Kind: deferred (1.64)
-- What the operator sees: `statblk` shows `apfs` (from `mount`) for disk3s5 and `APFS` (diskutil's File System Personality) for the unmounted disk3s3, so `statblk apfs` lists only the mounted volumes and `statblk APFS` only the unmounted ones. New to see in 1.63, because 1.62 listed no unmounted volume.
-- Why: `get_macos_diskutil_info()` takes FSTYPE from File System Personality.
-- Revisit when: statblk 1.64, started right after 1.63.
-- Plan (1.64): take FSTYPE from `Type (Bundle)` (all 13 volumes of the test capture have it, and it is the word `mount` prints), falling back to File System Personality; with a test on the capture.
-
-### macOS: a `Volume Total Space` line overrides a size of 0 (deferred, 1.64)
-- Kind: deferred (1.64)
-- What the operator sees: a device with `Disk Size: 0 B` and a `Volume Total Space` line gets the volume's size and is listed, where the rule says a size of 0 hides it. 1.62 did the same, for a `Volume Total Space` line in the first section of the device that it read. The test capture (macOS 26) has no `Volume Total Space` line, so this can only show on another macOS, and the fallback itself has no test.
-- Why: `get_macos_diskutil_info()` treats a parsed 0 as "no size yet" (`if not size_bytes ...`).
-- Revisit when: statblk 1.64, started right after 1.63.
-- Plan (1.64): `if size_bytes is None ...`, with two cases in `test_diskutil_size_none_when_it_gave_none` (only `Volume Total Space`; `Disk Size` 0 plus `Volume Total Space`), or drop the fallback if no macOS that prints it can be named.
-
 ### macOS: a mount line with a space in its source, or " (" in its mount point, is misread (deferred, 1.64)
 - Kind: deferred (1.64)
 - What the operator sees: with `-P`, a network mount whose source has a space (`//user@server/My Share on /Volumes/My Share (smbfs, ...)`) never becomes a row. A volume whose name has " (" in it (`/Volumes/Backup (old)`) is read at a cut-short mount point, so its statvfs fails: FSUSE% `ERROR`, and a healthy `--check` exits 3 (1.62 left the volume out of the table and its space unchecked, exit 0). Seen with a faked `mount` line (macOS `mount(8)`'s format), not on a Mac.

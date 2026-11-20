@@ -479,16 +479,18 @@ def get_macos_diskutil_info(timeout=0, unanswered=None):
 		devnode = current.get("Device Node")
 		if not devnode:
 			continue
-		# None: diskutil gave this device no size (0 is a size it gave). Disk Size first; older macOS gave some volumes
-		# their size only as Volume Total Space.
+		# None: diskutil gave this device no size (0 is a size it gave). Disk Size first; Volume Total Space only when
+		# there is no Disk Size (kept from 1.38 for an older macOS; macOS 26 prints no such line).
 		size_bytes = None
 		for size_key in ("Disk Size", "Volume Total Space"):
 			value = parse_bytes_from_diskutil_size(current.get(size_key))
-			if not size_bytes and value is not None:
+			if size_bytes is None:
 				size_bytes = value
 		model = current.get("Device / Media Name") or current.get("Media Name") or ""
 		serial = current.get("Serial Number") or ""
-		fstype = current.get("File System Personality") or ""
+		# Type (Bundle) is the word mount prints (apfs, msdos, exfat, hfs), so a mounted and an unmounted volume read
+		# alike; File System Personality (APFS, MS-DOS FAT32) only where it is missing.
+		fstype = current.get("Type (Bundle)") or current.get("File System Personality") or ""
 		label = current.get("Volume Name") or ""
 		uuid = (
 			current.get("Volume UUID")
