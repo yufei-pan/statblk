@@ -378,6 +378,15 @@ def test_linux_formated_only_lsblk_answered_drops_the_unformatted_rows(monkeypat
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-F"], run) == (1, ["sdb1"], "T\n", "")
 
 
+def test_linux_formated_only_still_shows_the_failing_disk_of_a_partition_lsblk_did_not_list(monkeypatch, capsys,
+                                                                                                tmp_path):
+    # lsblk exited 0 without sdb1 (it appeared after lsblk ran): sdb is listed with no filesystem and goes, but sdb1's
+    # blank type was not read, so it stays and carries sdb's SMART (1.63 dropped both and exited 0).
+    lsblk = [line for line in LSBLK if 'NAME="/dev/sdb1"' not in line]
+    run = _linux(monkeypatch, tmp_path, "/dev/sdb", lsblk=(lsblk, 0))
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-F"], run) == (1, ["sdb1"], "T\n", "")
+
+
 @pytest.mark.parametrize("argv, expected", [
     (["sda"], (3, [], "", _cut_line("lsblk", 0.5))),  # a pattern can match a cell lsblk fills
     (["-D", "sda"], (0, [], "", "")),  # -D matches the device names, which no stopped command can leave out

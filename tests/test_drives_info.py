@@ -631,6 +631,15 @@ def test_formated_only_drops_only_a_type_read_as_blank(monkeypatch, result, kept
     assert [r[0] for r in rows[1:]] == kept
 
 
+def test_formated_only_keeps_a_device_lsblk_did_not_list(monkeypatch):
+    # lsblk exited 0 but did not list sda3 (a partition that appeared after it ran): its blank FSTYPE was never read.
+    # 1.63 took lsblk's answer for every device and dropped it.
+    _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/sda2", "/dev/sda3"], mounts=defaultdict(list))
+    _patch_multicmd(monkeypatch, FakeCmdResult(_FORMATTED_AND_BLANK_LSBLK, 0))
+    rows = statblk.get_drives_info(output="NAME,FSTYPE", formated_only=True, timeout=2)
+    assert rows[1:] == [["sda1", "ext4"], ["sda3", ""]]
+
+
 def _hardware_and_virtual(tmp_path, monkeypatch):
     make_sysfs_block(tmp_path, "sda", size_sectors=1)  # physical: has device/
     make_sysfs_block(tmp_path, "loop0", size_sectors=1, with_device=False)

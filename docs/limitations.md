@@ -35,13 +35,6 @@ Approved known limitations and deferrals. Reviewers: read this first, and don't 
 - Revisit when: statblk 1.64, started right after 1.63.
 - Plan (1.64): `if size_bytes is None ...`, with two cases in `test_diskutil_size_none_when_it_gave_none` (only `Volume Total Space`; `Disk Size` 0 plus `Volume Total Space`), or drop the fallback if no macOS that prints it can be named.
 
-### Linux: `-F` drops a partition that `lsblk` answered without (deferred, 1.64)
-- Kind: deferred (1.64)
-- What the operator sees: `lsblk` exits 0 but does not list a device (a partition that appeared after it ran, or a name it prints differently): `-F` drops that device's row for a blank FSTYPE that was never read, and `--check -F` does not judge its disk through it. 1.62 did the same.
-- Why: "answered in full" is one flag for the whole `lsblk` output on Linux; macOS asks per device (`device_name in macos_info`).
-- Revisit when: statblk 1.64, started right after 1.63.
-- Plan (1.64): a per-device answer on Linux too (`device_name in` what `lsblk` listed), with a test.
-
 ### Linux: an unreadable sysfs size or stat reads as 0 (deferred, 1.64)
 - Kind: deferred (1.64)
 - What the operator sees: with `lsblk` stopped or missing, a sysfs `size` that cannot be read (a device that vanished between the listing and the read) reads as 0 and drops the row; `-A` drops a device whose sysfs `stat` cannot be read as idle. A failing disk that is only that row exits 0. A race, so rare. 1.62 did the same.

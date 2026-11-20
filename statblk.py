@@ -1139,17 +1139,18 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	size_dict = {}
 	model_dict = {}
 	serial_dict = {}
-	# Whether a blank FSTYPE of an unmounted device was read (its source answered in full: lsblk and diskutil exited 0,
-	# and so did mount), so -F may drop it.
-	fstype_answered = IS_DARWIN and 'diskutil' not in unanswered and 'mount' not in unanswered
+	# The devices whose blank FSTYPE, unmounted, was read, so -F may drop it: their source answered in full and named
+	# them (Linux: lsblk exited 0 and listed the device; macOS: diskutil described it, and it and mount exited 0).
+	fstype_listed = set()
+	if IS_DARWIN and 'diskutil' not in unanswered and 'mount' not in unanswered:
+		fstype_listed = set(macos_info)
 	if (not IS_DARWIN) and LSBLK_FIELDS.intersection(collect_fields):
 		lsblk_result.thread.join(_remaining(deadline))
 		# still running when the refresh's deadline came: as good as stopped at --timeout
 		returncode = TIMEOUT_RETURNCODE if lsblk_result.thread.is_alive() else lsblk_result.returncode
 		if returncode == 0:
-			fstype_answered = True
-			populate_lsblk_dicts(lsblk_result.stdout, collect_fields, uuid_dict, fstype_dict, label_dict, size_dict,
-								model_dict=model_dict, serial_dict=serial_dict)
+			fstype_listed = populate_lsblk_dicts(lsblk_result.stdout, collect_fields, uuid_dict, fstype_dict, label_dict,
+												size_dict, model_dict=model_dict, serial_dict=serial_dict)
 		elif LSBLK_NOTE_FIELDS.intersection(collect_fields):
 			# SIZE and LABEL have sources of their own
 			unanswered['lsblk'] = returncode
@@ -1254,8 +1255,8 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			device_properties['FSTYPE'] = fstype_dict.get(device_name, '')
 			# fstype_dict only holds non-empty types. Squashfs hiding is best effort
 			# here: it is only filled when FSTYPE is collected (an output column or -F).
-			fstype_read = fstype_answered and (not IS_DARWIN or device_name in macos_info)
-			if not keep_fstype(device_name, device_properties['FSTYPE'], formated_only and fstype_read, show_squashfs):
+			if not keep_fstype(device_name, device_properties['FSTYPE'], formated_only and device_name in fstype_listed,
+							show_squashfs):
 				continue
 			if IS_DARWIN:
 				# None: diskutil did not run, was stopped before this device, or gave it no size.
