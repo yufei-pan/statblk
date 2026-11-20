@@ -730,11 +730,12 @@ def get_blocks():
 		except Exception:
 			pass
 		return sorted(block_devices)
-	# Linux: get entries in /sys/class/block
+	# Linux: the entries in /sys/class/block that have a device number (`dev`), as lsblk lists them: a hidden NVMe
+	# multipath path node (nvme3c3n1) has none, no /dev node, and its namespace (nvme3n1) is the same disk.
 	block_devices = []
 	try:
 		for entry in os.listdir("/sys/class/block"):
-			if os.path.isdir(os.path.join("/sys/class/block", entry)):
+			if os.path.isfile(os.path.join("/sys/class/block", entry, "dev")):
 				block_devices.append(f'/dev/{entry}')
 	except Exception as e:
 		debug_exc('get_blocks linux', e)

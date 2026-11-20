@@ -1,4 +1,5 @@
 import errno
+import os
 from collections import defaultdict
 
 import pytest
@@ -775,3 +776,18 @@ def test_lsblk_that_did_not_answer_is_recorded(monkeypatch, result, output, form
     statblk.get_drives_info(output=output, formated_only=formated_only, timeout=2, unanswered=record, cut=cut)
     assert record == unanswered
     assert cut == [c for c, rc in unanswered.items() if rc == 124]  # the 1.62 list: only what the timeout stopped
+
+
+def test_get_blocks_skips_a_sysfs_entry_without_a_device_number(monkeypatch, tmp_path):
+    # A hidden NVMe multipath path node (nvme3c3n1) is in /sys/class/block with no `dev` file, no /dev node, and lsblk
+    # never lists it; 1.64's -F listed it with a blank FSTYPE.
+    monkeypatch.setattr(statblk, "IS_DARWIN", False)
+    redirect_sys_class_block(tmp_path, monkeypatch)
+    for name, has_dev in (("nvme3n1", True), ("nvme3c3n1", False), ("sda", True)):
+        make_sysfs_block(tmp_path, name, size_sectors=8)
+        if has_dev:
+            (tmp_path / "sys" / "class" / "block" / name / "dev").write_text("259:0\n")
+    fake = str(tmp_path / "sys" / "class" / "block")
+    real_listdir = os.listdir
+    monkeypatch.setattr(statblk.os, "listdir", lambda p: real_listdir(fake) if p == "/sys/class/block" else real_listdir(p))
+    assert sorted(statblk.get_blocks()) == ["/dev/nvme3n1", "/dev/sda"]
