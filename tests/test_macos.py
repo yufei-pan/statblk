@@ -23,6 +23,34 @@ def _darwin_commands(monkeypatch):
     monkeypatch.setattr(statblk, "MOUNT_PATH", MOUNT)
 
 
+@pytest.mark.parametrize("line, source, mountpoint, fstype", [
+    ("//me@nas/My Share on /Volumes/My Share (smbfs, nodev, nosuid, mounted by me)", "//me@nas/My Share",
+     "/Volumes/My Share", "smbfs"),
+    ("/dev/disk4s1 on /Volumes/Backup (old) (msdos, local, nodev, nosuid, noowners)", "/dev/disk4s1",
+     "/Volumes/Backup (old)", "msdos"),
+    ("map auto_home on /System/Volumes/Data/home (autofs, automounted, nobrowse)", "map auto_home",
+     "/System/Volumes/Data/home", "autofs"),
+    ("/dev/disk5s1 on /Volumes/Work on Mac (apfs, local)", "/dev/disk5s1", "/Volumes/Work on Mac", "apfs"),
+], ids=["space in the source", "parenthesis in the mount point", "autofs map", "on in the mount point"])
+def test_parse_darwin_mount_line_with_spaces(line, source, mountpoint, fstype):
+    # 1.63 read the source as one word and the mount point up to the first " (": the share never became a row, and
+    # the volume's statvfs ran on "/Volumes/Backup" (FSUSE% ERROR).
+    dev, ent = statblk.parse_darwin_mount_line(line)
+    assert (dev, ent.MOUNTPOINT, ent.FSTYPE) == (source, mountpoint, fstype)
+
+
+def test_darwin_mounts_with_spaces_are_rows_and_their_use_is_read(monkeypatch):
+    mount = MACOS26_MOUNT + ["//me@nas/My Share on /Volumes/My Share (smbfs, nodev, nosuid, mounted by me)",
+                             "/dev/disk4s1 on /Volumes/Backup (old) (msdos, local, nodev, nosuid, noowners)"]
+    _darwin_machine(monkeypatch, dev=MACOS26_DEV + ["/dev/disk4", "/dev/disk4s1"], mount=(mount, 0))
+    asked = []
+    monkeypatch.setattr(statblk, "get_statvfs_use_size", lambda mp, *a, **k: asked.append(mp) or (1000, 350, 650))
+    rows = statblk.get_drives_info(output="NAME,FSUSE%,MOUNTPOINT", pseudo=True, timeout=2)
+    assert ["//me@nas/My Share", "35%", "/Volumes/My Share"] in rows
+    assert ["disk4s1", "35%", "/Volumes/Backup (old)"] in rows
+    assert "/Volumes/Backup (old)" in asked and "/Volumes/Backup" not in asked
+
+
 def _diskutil_info(monkeypatch, lines, returncode=0):
     _darwin_commands(monkeypatch)
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: FakeCmdResult(lines, returncode))

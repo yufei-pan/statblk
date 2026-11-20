@@ -653,27 +653,38 @@ def parse_mountinfo_line(line):
 	mount_point = _decode_proc_path(parts[4])
 	mount_options_str = parts[5]
 	fstype = parts[dash_idx + 1]
-	device_name = _decode_proc_path(parts[dash_idx + 2])
-	if device_name.startswith(os.path.sep):
-		device_name = os.path.realpath(device_name)
+	device_name = _real_device(_decode_proc_path(parts[dash_idx + 2]))
 	options = [x.strip() for x in mount_options_str.split(',') if x.strip()]
 	return device_name, MountEntry(mount_point, fstype, options)
 
+def _real_device(source):
+	"""A mount source under /dev with its symlinks resolved (/dev/mapper/vg-lv to /dev/dm-0); any other source as it
+	is: realpath would read the SMB share //server/share as the path /server/share.
+
+	>>> _real_device('//user@server/My Share'), _real_device('server:/export')
+	('//user@server/My Share', 'server:/export')
+	"""
+	return os.path.realpath(source) if source.startswith('/dev/') else source
+
 def parse_darwin_mount_line(line):
-	"""Parse one macOS mount(8) output line into (device, MountEntry).
+	"""Parse one macOS mount(8) output line, `SOURCE on MOUNTPOINT (OPTIONS)`, into (device, MountEntry). The source
+	runs to the first " on ", the options are in the last parentheses, and the mount point is what lies between, so
+	either may hold spaces, and the mount point " (".
 
 	>>> dev, ent = parse_darwin_mount_line('/dev/disk3s1 on / (apfs, local, journaled)')
 	>>> ent.MOUNTPOINT, ent.FSTYPE, ent.OPTIONS[1]
 	('/', 'apfs', 'local')
+	>>> parse_darwin_mount_line('//me@nas/My Share on /Volumes/My Share (smbfs, nodev, nosuid, mounted by me)')[0]
+	'//me@nas/My Share'
+	>>> parse_darwin_mount_line('/dev/disk4s1 on /Volumes/Backup (old) (msdos, local)')[1].MOUNTPOINT
+	'/Volumes/Backup (old)'
 	>>> parse_darwin_mount_line('not a mount line') is None
 	True
 	"""
-	match = re.match(r"^(\S+)\s+on\s+(.+?)\s+\((.*)\)$", line)
+	match = re.match(r"^(.+?)\s+on\s+(.+)\s+\(([^()]*)\)$", line)
 	if not match:
 		return None
-	device_name = match.group(1)
-	if device_name.startswith(os.path.sep):
-		device_name = os.path.realpath(device_name)
+	device_name = _real_device(match.group(1))
 	mount_point = match.group(2)
 	options = [x.strip() for x in match.group(3).split(",") if x.strip()]
 	fstype = options[0] if options else ""
@@ -698,7 +709,9 @@ def parseMount(timeout=0, unanswered=None):
 			add(parse_darwin_mount_line(line))
 		return mount_table
 	try:
-		with open(MOUNTINFO_PATH, 'r', encoding='utf-8', errors='ignore') as f:
+		# As os.fsdecode reads a path: a mount point with bytes that are not UTF-8 (or not ASCII, Python 3.6 in the C
+		# locale) reaches statvfs as the same bytes. 1.63 dropped them, and its statvfs failed (FSUSE% ERROR).
+		with open(MOUNTINFO_PATH, 'r', encoding=sys.getfilesystemencoding(), errors='surrogateescape') as f:
 			for line in f:
 				add(parse_mountinfo_line(line))
 	except Exception as e:

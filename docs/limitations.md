@@ -21,13 +21,6 @@ Approved known limitations and deferrals. Reviewers: read this first, and don't 
 - Revisit when: someone sees it on a real disk, or measures what smartctl answers for one.
 - Approved: 2026-11-16, chief's decision C78 (the user's desk session; not the user's words): option (1), a known limitation with one README line.
 
-### macOS: a mount line with a space in its source, or " (" in its mount point, is misread (deferred, 1.64)
-- Kind: deferred (1.64)
-- What the operator sees: with `-P`, a network mount whose source has a space (`//user@server/My Share on /Volumes/My Share (smbfs, ...)`) never becomes a row. A volume whose name has " (" in it (`/Volumes/Backup (old)`) is read at a cut-short mount point, so its statvfs fails: FSUSE% `ERROR`, and a healthy `--check` exits 3 (1.62 left the volume out of the table and its space unchecked, exit 0). Seen with a faked `mount` line (macOS `mount(8)`'s format), not on a Mac.
-- Why: `parse_darwin_mount_line()` reads the source as one word (`\S+`) and the mount point up to the first " (".
-- Revisit when: statblk 1.64, started right after 1.63.
-- Plan (1.64): read the source up to ` on ` and the options from the last parenthesis (`^(.+?)\s+on\s+(.+)\s+\(([^()]*)\)$`), with a test on each line. On Linux, read mountinfo with `errors='surrogateescape'`, so a non-UTF-8 mount path reaches statvfs intact.
-
 ### The macOS test of a silent `diskutil` and `mount` has a thin time margin (deferred, 1.64)
 - Kind: deferred (1.64)
 - What the operator sees: nothing; on the test Mac `test_a_silent_diskutil_and_mount_are_stopped_and_recorded` failed once on a first run (and passed in 19 further runs), because it gives the fake commands 0.3 s to print a first line, and a fresh script there takes 0.09 to 0.12 s to print it. The cause is likely, not proven: the measured latency explains a margin of 3x, not the one run over 0.3 s.
