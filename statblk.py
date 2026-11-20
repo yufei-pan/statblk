@@ -1044,10 +1044,10 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 					filter_patterns=None,invert_match=False,match_devname_only=False,timeout=None,
 					debug=False,cut=None,unanswered=None):
 	"""Rows of the table, header first. unanswered: a dict that gets, for each command that did not answer in full
-	('diskutil', 'mount', 'lsblk'; see CUT_WHAT) and whose answer a collected column needs (lsblk: FSTYPE, UUID, MODEL
-	or SERIAL, or -F), its return code: 124 the timeout stopped it (or it was still running at the deadline), 127 not
-	found, any other it failed. cut: a list that gets the name of each command the timeout
-	stopped (as in 1.62; unanswered has them too).
+	('diskutil', 'mount', 'lsblk'; see CUT_WHAT), its return code. `mount` (macOS) is always recorded, `diskutil` when a
+	column it fills is collected, `lsblk` only when FSTYPE, UUID, MODEL or SERIAL is collected, or -F. 124 the timeout
+	stopped it (or it was still running at the deadline), 127 not found, any other it failed. cut: a list that gets the
+	name of each command the timeout stopped (as in 1.62; unanswered has them too).
 
 	-F, -A and the size filters drop a row only on a value that was read: a SIZE diskutil or sysfs did not give is not
 	a zero size, a blank FSTYPE whose source did not answer in full is not "no filesystem", and throughput not read

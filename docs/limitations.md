@@ -29,18 +29,18 @@ Approved known limitations and deferrals. Reviewers: read this first, and don't 
 
 ### `--check` with no valid output field judges nothing
 - Kind: deferred (1.65)
-- What the operator sees: `statblk --check -o foo` (every named field unknown) prints "No valid output fields specified.", gets no rows, and exits 0. 1.63 did the same.
+- What the operator sees: `statblk --check -x FSUSE%,SMART -o foo` (every field it would show is unknown or excluded) prints "Ignoring invalid output field: FOO." then "No valid output fields specified.", gets no rows, and exits 0. 1.63 did the same.
 - Why: `get_drives_info()` returns no rows and `check_rows([])` calls that healthy. The right answer is exit 3.
 - Revisit when: 1.65.
 
 ### `-w` with stderr redirected and stdout a terminal repeats the note each refresh
 - Kind: deferred (1.65)
-- What the operator sees: `statblk -w 2 2>>log` on a terminal writes the stopped, missing or failed command's note to the log on every refresh. 1.63 did the same.
+- What the operator sees: `statblk -w 2 2>>log` on a terminal writes the stopped, missing or failed command's note to the log on every refresh. 1.63 did the same for a stopped or missing command.
 - Why: the note is repeated when the table is redrawn on a terminal (stdout), so it stays under the table; it is not keyed on where stderr goes. It should be once per run when stderr is not that terminal.
 - Revisit when: 1.65.
 
 ### A counter reset between refreshes shows a negative READ or WRITE rate
 - Kind: deferred (1.65)
-- What the operator sees: in watch mode, a device whose kernel counters reset (a device removed and re-added under the same name, a wrapped counter) shows one refresh with a negative rate. 1.63 did the same.
+- What the operator sees: in watch mode, a device whose kernel counters reset (a device removed and re-added under the same name, a wrapped counter) shows one refresh with a negative rate (`null` in `-J`). 1.63 did the same.
 - Why: the rate is the difference of two samples over the interval, with no check that the second is not below the first. It should be blank for that refresh.
 - Revisit when: 1.65.
