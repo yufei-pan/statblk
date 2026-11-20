@@ -20,7 +20,7 @@ def _patch_linux_basics(monkeypatch, devices=None, mounts=None):
     mounts = mounts if mounts is not None else _mount_table()
     monkeypatch.setattr(statblk, "IS_DARWIN", False)
     monkeypatch.setattr(statblk, "get_blocks", lambda: list(devices))
-    monkeypatch.setattr(statblk, "parseMount", lambda timeout=0, cut=None: mounts)
+    monkeypatch.setattr(statblk, "parseMount", lambda timeout=0, unanswered=None: mounts)
     monkeypatch.setattr(statblk, "is_block_device", lambda p: True)
     monkeypatch.setattr(statblk, "get_partition_parent_name", lambda p: "/dev/sda")
     monkeypatch.setattr(
@@ -71,7 +71,7 @@ def test_filter_patterns(monkeypatch):
     _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/nvme0n1"])
     mounts = _mount_table("/dev/sda1", "/")
     mounts["/dev/nvme0n1"] = [statblk.MountEntry("/mnt", "xfs", ["rw"])]
-    monkeypatch.setattr(statblk, "parseMount", lambda timeout=0, cut=None: mounts)
+    monkeypatch.setattr(statblk, "parseMount", lambda timeout=0, unanswered=None: mounts)
     fake = FakeCmdResult([], 0)
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
@@ -85,7 +85,7 @@ def test_invert_match_row_filter(monkeypatch):
     _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/nvme0n1"])
     mounts = _mount_table("/dev/sda1", "/")
     mounts["/dev/nvme0n1"] = [statblk.MountEntry("/mnt", "xfs", ["rw"])]
-    monkeypatch.setattr(statblk, "parseMount", lambda timeout=0, cut=None: mounts)
+    monkeypatch.setattr(statblk, "parseMount", lambda timeout=0, unanswered=None: mounts)
     fake = FakeCmdResult([], 0)
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
@@ -687,16 +687,21 @@ def test_library_default_timeout_reaches_lsblk_as_no_limit(monkeypatch):
     assert rows[1:] == [["sda1", "SN123"]]
 
 
-@pytest.mark.parametrize("result, output, expected", [
-    (FakeCmdResult([], returncode=124), "NAME,FSTYPE", ["lsblk"]),       # stopped at --timeout
-    (FakeCmdResult([], returncode=None, alive=True), "NAME,SERIAL", ["lsblk"]),  # still running at the deadline
-    (FakeCmdResult([], returncode=124), "NAME,SIZE", []),        # SIZE and LABEL have sources of their own
-    (FakeCmdResult([], returncode=1), "NAME,FSTYPE", []),         # it ended: not the timeout's doing
-    (FakeCmdResult(['NAME="/dev/sda1" FSTYPE="ext4"'], 0), "NAME,FSTYPE", []),
+@pytest.mark.parametrize("result, output, formated_only, unanswered", [
+    (FakeCmdResult([], returncode=124), "NAME,FSTYPE", False, {"lsblk": 124}),  # stopped at --timeout
+    (FakeCmdResult([], returncode=None, alive=True), "NAME,SERIAL", False, {"lsblk": 124}),  # running at the deadline
+    (FakeCmdResult([], returncode=124), "NAME,SIZE", False, {}),  # SIZE and LABEL have sources of their own
+    (FakeCmdResult([], returncode=1), "NAME,FSTYPE", False, {"lsblk": 1}),  # it failed
+    (FakeCmdResult([], returncode=127), "NAME,UUID", False, {"lsblk": 127}),  # not installed
+    (FakeCmdResult([], returncode=127), "NAME,LABEL", False, {}),
+    (FakeCmdResult([], returncode=127), "NAME,SIZE", True, {"lsblk": 127}),  # -F needs FSTYPE without showing it
+    (FakeCmdResult([], returncode=127), "NAME,FSUSE%", False, {}),  # no column needs lsblk: it does not run
+    (FakeCmdResult(['NAME="/dev/sda1" FSTYPE="ext4"'], 0), "NAME,FSTYPE", False, {}),
 ])
-def test_lsblk_cut_by_the_timeout_is_recorded(monkeypatch, result, output, expected):
+def test_lsblk_that_did_not_answer_is_recorded(monkeypatch, result, output, formated_only, unanswered):
     _patch_linux_basics(monkeypatch)
     _patch_multicmd(monkeypatch, result)
-    cut = []
-    statblk.get_drives_info(output=output, timeout=2, cut=cut)
-    assert cut == expected
+    record, cut = {}, []
+    statblk.get_drives_info(output=output, formated_only=formated_only, timeout=2, unanswered=record, cut=cut)
+    assert record == unanswered
+    assert cut == [c for c, rc in unanswered.items() if rc == 124]  # the 1.62 list: only what the timeout stopped

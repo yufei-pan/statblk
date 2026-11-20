@@ -21,20 +21,6 @@ Approved known limitations and deferrals. Reviewers: read this first, and don't 
 - Revisit when: someone sees it on a real disk, or measures what smartctl answers for one.
 - Approved: 2026-11-16, chief's decision C78 (the user's desk session; not the user's words): option (1), a known limitation with one README line.
 
-### A command that failed without being stopped is not recorded (deferred, 1.64)
-- Kind: deferred (1.64)
-- What the operator sees: the cut rule and the stderr note count only a command `--timeout` stopped (for `lsblk`, also one still running at the deadline). An `lsblk` that is missing (it has its own note, which the rule does not read) or exits with an error, a macOS `diskutil` that exits with an error and prints nothing, and a macOS `mount` that fails (non-zero exit, or nothing printed), do not count. So `statblk --check PATTERN` on a Linux host with no working `lsblk`, with a failing disk whose unmounted filesystem the pattern matches only through `lsblk`'s FSTYPE, exits 0 and prints nothing, and a pattern that only a failed `diskutil` would have filled does the same on macOS. A macOS `mount` that fails leaves every device listed with MOUNTPOINT and FSUSE% blank (1.62 listed no device), with no note, so `--check` exits 0 over a full filesystem, and with `-M`, which drops the rows `mount` did not list, over a failing disk. 1.62 exited 0 in each of these runs.
-- Why: `cut` is filled for return code 124 (and a still-running `lsblk`) only; a missing `lsblk` is found by `shutil.which` in `main()`; 1.63's `diskutil` `failed` list is one more such record.
-- Revisit when: statblk 1.64, started right after 1.63.
-- Plan (1.64): one record of "did not answer in full" per command (stopped, missing or failed), read by the pattern term of the cut rule and by the stderr note; `main()`'s `shutil.which('lsblk')` and the `failed` list go. `-F` keeps a device whose type a failed command did not give, as 1.63 does. The cost to weigh: on a host with no `lsblk`, a healthy `statblk --check sda` would then exit 3 until the operator writes `-D sda`.
-
-### `-F` with no `lsblk` does not say why it filters nothing (deferred, 1.64)
-- Kind: deferred (1.64)
-- What the operator sees: with no `lsblk`, `statblk -F -o NAME,SIZE` lists sda, sda1, sdb and sdb1, because the type of an unmounted device was not read (1.62 listed only the mounted sda1), and stderr is empty (1.62's too). The "lsblk not found" note is printed only when FSTYPE, UUID, MODEL or SERIAL is shown, and `-F` needs FSTYPE without showing it.
-- Why: `note_due` in `main()` looks at the shown columns only, and `-F` needs FSTYPE without showing it.
-- Revisit when: statblk 1.64, started right after 1.63.
-- Plan (1.64): `note_due` also holds when `-F` is given (`... and (args.formated_only or LSBLK_NOTE_FIELDS.intersection(results[0]))`), with a test.
-
 ### macOS: FSTYPE reads `APFS` on an unmounted volume and `apfs` on a mounted one (deferred, 1.64)
 - Kind: deferred (1.64)
 - What the operator sees: `statblk` shows `apfs` (from `mount`) for disk3s5 and `APFS` (diskutil's File System Personality) for the unmounted disk3s3, so `statblk apfs` lists only the mounted volumes and `statblk APFS` only the unmounted ones. New to see in 1.63, because 1.62 listed no unmounted volume.

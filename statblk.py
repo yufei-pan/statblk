@@ -260,15 +260,18 @@ VERSION = version
 __version__ = version
 COMMIT_DATE = '2026-11-17'
 
-# smartmontools installs into sbin, which non-root PATHs often omit (e.g. Debian),
-# yet `--sudo` exists exactly for non-root users who want SMART.
-SMARTCTL_FALLBACK_DIRS = ["/usr/sbin", "/sbin", "/usr/local/sbin", "/opt/homebrew/sbin"]
+# The sbin directories a non-root PATH often omits: smartmontools installs smartctl there (e.g. Debian), yet `--sudo`
+# exists exactly for non-root users who want SMART; and macOS keeps diskutil in /usr/sbin and mount in /sbin, where
+# cron's PATH (/usr/bin:/bin) does not look.
+SBIN_DIRS = ["/usr/sbin", "/sbin", "/usr/local/sbin", "/opt/homebrew/sbin"]
 
-def find_smartctl(fallback_dirs=SMARTCTL_FALLBACK_DIRS):
-	return shutil.which("smartctl") or shutil.which("smartctl", path=os.pathsep.join(fallback_dirs))
+def find_command(name, fallback_dirs=SBIN_DIRS):
+	return shutil.which(name) or shutil.which(name, path=os.pathsep.join(fallback_dirs))
 
-SMARTCTL_PATH = find_smartctl()
-DISKUTIL_PATH = shutil.which("diskutil")
+SMARTCTL_PATH = find_command("smartctl")
+# Not found: run by name, so multiCMD answers 127 and the command is named on stderr as not found.
+DISKUTIL_PATH = find_command("diskutil") or "diskutil"
+MOUNT_PATH = find_command("mount") or "mount"
 IS_DARWIN = (sys.platform == "darwin")
 MOUNTINFO_PATH = '/proc/self/mountinfo'
 _DEBUG_MODE = False
@@ -278,10 +281,11 @@ LSBLK_FIELDS = {'SIZE', 'FSTYPE', 'UUID', 'LABEL', 'MODEL', 'SERIAL'}
 # The columns the note below names (SIZE and LABEL have their own sysfs and /dev/disk sources).
 LSBLK_NOTE_FIELDS = {'FSTYPE', 'UUID', 'MODEL', 'SERIAL'}
 LSBLK_LACKS = "FSTYPE of an unmounted filesystem is blank (-F keeps it), and UUID, MODEL and SERIAL come from sysfs and /dev/disk instead and may be incomplete"
-LSBLK_MISSING_NOTE = f"lsblk not found (it comes with util-linux): {LSBLK_LACKS}."
-# multiCMD's return code for a command it stopped at --timeout.
+# multiCMD's return codes for a command it stopped at --timeout, and for one it did not find.
 TIMEOUT_RETURNCODE = 124
-# What is missing when --timeout stopped one of the commands statblk reads (see cut_note).
+NOT_FOUND_RETURNCODE = 127
+NOT_FOUND_HINT = {'lsblk': ' (it comes with util-linux)'}
+# What is missing when one of the commands statblk reads did not answer in full (see cut_note).
 CUT_WHAT = {
 	'diskutil': "an unmounted device may have no SIZE or FSTYPE, and UUID, LABEL, MODEL, SERIAL and DISCARD may be blank or N/A",
 	'mount': "mounted filesystems may be missing, or listed with no MOUNTPOINT or FSUSE%",
@@ -350,17 +354,19 @@ def parse_lsblk_pairs_line(line):
 
 def populate_lsblk_dicts(stdout, output_fields_set, uuid_dict, fstype_dict, label_dict, size_dict,
 						model_dict=None, serial_dict=None):
-	"""Populate device metadata dicts from lsblk -P stdout lines.
+	"""Populate device metadata dicts from lsblk -P stdout lines; return the set of devices lsblk listed.
 
 	MODEL/SERIAL come from udev via lsblk and are only set on whole disks.
 
 	>>> u, f, l, s = {}, {}, {}, {}
 	>>> populate_lsblk_dicts(
-	...     ['NAME="/dev/sda" SIZE="100" FSTYPE="ext4" UUID="u1" LABEL="l1"'],
-	...     {'SIZE', 'FSTYPE', 'UUID', 'LABEL'}, u, f, l, s)
-	>>> s['/dev/sda'], f['/dev/sda'], u['/dev/sda'], l['/dev/sda']
-	(100, 'ext4', 'u1', 'l1')
+	...     ['NAME="/dev/sda" SIZE="100" FSTYPE="ext4" UUID="u1" LABEL="l1"', 'NAME="/dev/sdb" SIZE="5" FSTYPE=""'],
+	...     {'SIZE', 'FSTYPE', 'UUID', 'LABEL'}, u, f, l, s) == {'/dev/sda', '/dev/sdb'}
+	True
+	>>> s['/dev/sda'], f['/dev/sda'], u['/dev/sda'], l['/dev/sda'], '/dev/sdb' in f
+	(100, 'ext4', 'u1', 'l1', False)
 	"""
+	listed = set()
 	for line in stdout:
 		line = line.strip()
 		if not line:
@@ -374,6 +380,7 @@ def populate_lsblk_dicts(stdout, output_fields_set, uuid_dict, fstype_dict, labe
 			lsblk_label = fields.get('LABEL', '')
 			if lsblk_name.startswith(os.path.sep):
 				lsblk_name = os.path.realpath(lsblk_name)
+			listed.add(lsblk_name)
 			if 'UUID' in output_fields_set and lsblk_uuid:
 				uuid_dict[lsblk_name] = lsblk_uuid
 			if 'FSTYPE' in output_fields_set and lsblk_fstype:
@@ -388,6 +395,7 @@ def populate_lsblk_dicts(stdout, output_fields_set, uuid_dict, fstype_dict, labe
 				size_dict[lsblk_name] = int(lsblk_size)
 		except Exception as e:
 			debug_exc('lsblk line', e)
+	return listed
 
 def read_text(path):
 	try:
@@ -439,23 +447,19 @@ def parse_bytes_from_diskutil_size(value):
 	match = re.search(r"\((\d+)\s+Bytes\)", value or "")
 	return int(match.group(1)) if match else None
 
-def get_macos_diskutil_info(timeout=0, cut=None, failed=None):
+def get_macos_diskutil_info(timeout=0, unanswered=None):
 	"""
 	Build map: /dev/diskXsY -> info from `diskutil info -all`.
 	Only used on macOS. timeout: seconds without output before diskutil is stopped (0: no limit).
-	cut: a list that gets 'diskutil' when the timeout stopped it (what it printed before is still read).
-	failed: a list that gets 'diskutil' when it exited with an error and was not stopped (what it printed is still
-	read, but it may have ended in the middle of a device).
+	unanswered: a dict that gets 'diskutil': its return code when it did not answer in full (124: the timeout stopped
+	it; 127: not found; any other: it failed). What it printed is still read, but it may end in the middle of a device.
 	"""
-	if not IS_DARWIN or not DISKUTIL_PATH:
+	if not IS_DARWIN:
 		return {}
 	info_map = {}
 	task = multiCMD.run_command(f"{DISKUTIL_PATH} info -all", timeout=timeout, quiet=True, return_object=True)
-	if task.returncode == TIMEOUT_RETURNCODE:
-		if cut is not None:
-			cut.append('diskutil')
-	elif task.returncode != 0 and failed is not None:
-		failed.append('diskutil')
+	if task.returncode != 0 and unanswered is not None:
+		unanswered['diskutil'] = task.returncode
 	# Blank lines split one device's sections and lines of stars split devices: a device ends where the next one's
 	# Device Node starts. "Not applicable (no file system)" and the like are no value, except an empty slot's size,
 	# which is 0 as in 1.62 (a zero-size device, hidden by default).
@@ -669,9 +673,10 @@ def parse_darwin_mount_line(line):
 	fstype = options[0] if options else ""
 	return device_name, MountEntry(mount_point, fstype, options)
 
-def parseMount(timeout=0, cut=None):
+def parseMount(timeout=0, unanswered=None):
 	"""Map device -> [MountEntry]. timeout: seconds macOS's `mount` may go without output (0: no limit).
-	cut: a list that gets 'mount' when the timeout stopped it."""
+	unanswered: a dict that gets 'mount': macOS's `mount`'s return code when it did not answer in full (124: the
+	timeout stopped it; 127: not found; any other: it failed). What it printed is still read."""
 	mount_table = defaultdict(list)
 	def add(parsed):
 		# Skip autofs triggers: stat-ing them mounts the target (df skips them
@@ -680,9 +685,9 @@ def parseMount(timeout=0, cut=None):
 			device_name, entry = parsed
 			mount_table[device_name].append(entry)
 	if IS_DARWIN:
-		task = multiCMD.run_command('mount', timeout=timeout, quiet=True, return_object=True)
-		if task.returncode == TIMEOUT_RETURNCODE and cut is not None:
-			cut.append('mount')
+		task = multiCMD.run_command(MOUNT_PATH, timeout=timeout, quiet=True, return_object=True)
+		if task.returncode != 0 and unanswered is not None:
+			unanswered['mount'] = task.returncode
 		for line in task.stdout:
 			add(parse_darwin_mount_line(line))
 		return mount_table
@@ -1050,9 +1055,11 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 					formated_only=False, show_zero_size_devices=False,show_squashfs=False,pseudo=False,tptDict=None,
 					full=False,active_only=False,output="all",exclude="",
 					filter_patterns=None,invert_match=False,match_devname_only=False,timeout=None,
-					debug=False,cut=None):
-	"""Rows of the table, header first. cut: a list that gets the name of each command whose answer the timeout
-	cut short ('diskutil', 'mount', 'lsblk'; see CUT_WHAT).
+					debug=False,cut=None,unanswered=None):
+	"""Rows of the table, header first. unanswered: a dict that gets, for each command that did not answer in full
+	('diskutil', 'mount', 'lsblk'; see CUT_WHAT), its return code: 124 the timeout stopped it (or it was still running
+	at the deadline), 127 not found, any other it failed. cut: a list that gets the name of each command the timeout
+	stopped (as in 1.62; unanswered has them too).
 
 	A filter drops a row only on a value that was read: a SIZE diskutil did not give is not a zero size, a blank
 	FSTYPE whose source did not answer in full is not "no filesystem", and macOS throughput, which is never read, is
@@ -1063,8 +1070,8 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 		_DEBUG_MODE = True
 	# None (the default for library callers) means no limit, as 0 does; multiCMD takes only a number.
 	timeout = timeout or 0
-	if cut is None:
-		cut = []
+	if unanswered is None:
+		unanswered = {}
 	if tptDict is None:
 		tptDict = {}
 	# macOS has no per-device throughput (READ and WRITE show 0), so -A drops nothing there.
@@ -1081,9 +1088,8 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	# Filters may need data that isn't a displayed column (-F needs FSTYPE).
 	collect_fields = (output_fields_set | {'FSTYPE'}) if formated_only else output_fields_set
 	macos_info = {}
-	diskutil_failed = []
 	if IS_DARWIN and {'SIZE','FSTYPE','UUID','LABEL','MODEL','SERIAL','DISCARD'}.intersection(collect_fields):
-		macos_info = get_macos_diskutil_info(timeout=timeout, cut=cut, failed=diskutil_failed)
+		macos_info = get_macos_diskutil_info(timeout=timeout, unanswered=unanswered)
 	if (not IS_DARWIN) and LSBLK_FIELDS.intersection(collect_fields):
 		lsblk_cmd = 'lsblk -b -n -p -o NAME,SIZE,FSTYPE,UUID,LABEL,MODEL,SERIAL -P'
 		lsblk_result = multiCMD.run_command(lsblk_cmd, timeout=timeout, quiet=True, wait_for_return=False, return_object=True)
@@ -1110,7 +1116,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			else:
 				sysfs_block_path = os.path.join('/sys/class/block', os.path.basename(block_device))
 				tptDict[block_device] = get_read_write_rate_throughput_iter(sysfs_block_path)
-	mount_table = parseMount(timeout, cut=cut)
+	mount_table = parseMount(timeout, unanswered=unanswered)
 	target_devices = set(block_devices)
 	if pseudo:
 		target_devices.update(mount_table.keys())
@@ -1134,18 +1140,19 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	model_dict = {}
 	serial_dict = {}
 	# Whether a blank FSTYPE of an unmounted device was read (its source answered in full: lsblk and diskutil exited 0,
-	# mount was not stopped), so -F may drop it.
-	fstype_answered = IS_DARWIN and 'diskutil' not in cut and not diskutil_failed and 'mount' not in cut
+	# and so did mount), so -F may drop it.
+	fstype_answered = IS_DARWIN and 'diskutil' not in unanswered and 'mount' not in unanswered
 	if (not IS_DARWIN) and LSBLK_FIELDS.intersection(collect_fields):
 		lsblk_result.thread.join(_remaining(deadline))
-		if lsblk_result.returncode == 0:
+		# still running when the refresh's deadline came: as good as stopped at --timeout
+		returncode = TIMEOUT_RETURNCODE if lsblk_result.thread.is_alive() else lsblk_result.returncode
+		if returncode == 0:
 			fstype_answered = True
 			populate_lsblk_dicts(lsblk_result.stdout, collect_fields, uuid_dict, fstype_dict, label_dict, size_dict,
 								model_dict=model_dict, serial_dict=serial_dict)
-		elif LSBLK_NOTE_FIELDS.intersection(collect_fields) and (
-				lsblk_result.returncode == TIMEOUT_RETURNCODE or lsblk_result.thread.is_alive()):
-			# stopped at --timeout, or still running when the refresh's deadline came
-			cut.append('lsblk')
+		elif LSBLK_NOTE_FIELDS.intersection(collect_fields):
+			# SIZE and LABEL have sources of their own
+			unanswered['lsblk'] = returncode
 	if IS_DARWIN:
 		for devname, info in macos_info.items():
 			if 'UUID' in output_fields_set and info.get('UUID'):
@@ -1266,6 +1273,8 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	elif invert_match and not filter_patterns:
 		# if no patterns but invert_match is set, return only header (with or without -D)
 		output_list = [output_list[0]]
+	if cut is not None:
+		cut.extend(command for command, returncode in unanswered.items() if returncode == TIMEOUT_RETURNCODE)
 	return output_list
 
 
@@ -1365,13 +1374,22 @@ def check_rows(rows, max_use):
 		return reported, CHECK_PROBLEM
 	return reported, CHECK_UNKNOWN if CHECK_UNKNOWN in statuses else CHECK_OK
 
-def cut_note(command, timeout):
-	"""The stderr line for a command --timeout stopped before it finished (see CUT_WHAT).
+def cut_note(command, timeout, returncode=TIMEOUT_RETURNCODE):
+	"""The stderr line for a command that did not answer in full (see CUT_WHAT), by its return code: 124 stopped by
+	--timeout (or still running at the deadline), 127 not found, any other failed.
 
 	>>> cut_note('mount', 0.5)
 	'mount was stopped by -t 0.5 before it finished: mounted filesystems may be missing, or listed with no MOUNTPOINT or FSUSE%. A larger -t gives it longer.'
+	>>> cut_note('lsblk', 2, 127)[:53]
+	'lsblk not found (it comes with util-linux): FSTYPE of'
+	>>> cut_note('mount', 2, 1)
+	'mount failed (exit 1): mounted filesystems may be missing, or listed with no MOUNTPOINT or FSUSE%.'
 	"""
-	return f"{command} was stopped by -t {timeout:g} before it finished: {CUT_WHAT[command]}. A larger -t gives it longer."
+	if returncode == TIMEOUT_RETURNCODE:
+		return f"{command} was stopped by -t {timeout:g} before it finished: {CUT_WHAT[command]}. A larger -t gives it longer."
+	if returncode == NOT_FOUND_RETURNCODE:
+		return f"{command} not found{NOT_FOUND_HINT.get(command, '')}: {CUT_WHAT[command]}."
+	return f"{command} failed (exit {returncode}): {CUT_WHAT[command]}."
 
 def rows_to_objects(rows):
 	"""Turn get_drives_info(print_bytes=True) rows into one dict per row, with
@@ -1452,15 +1470,14 @@ def main():
 			named = {x.strip().upper() for x in (args.output + ',' + args.exclude).split(',')}
 			args.output += ''.join(',' + field for field in CHECK_FIELDS if field not in named)
 	multiCMD.set_sudo(args.sudo)
-	# multiCMD's quiet=True hides its "Command path not found" line, so say why lsblk's columns may be incomplete.
-	lsblk_note = LSBLK_MISSING_NOTE if not IS_DARWIN and not shutil.which('lsblk') else ''
 	# A terminal is redrawn in place (one write, so no flicker); piped output and JSON keep every refresh.
 	redraw = print_period > 0 and sys.stdout.isatty() and not (args.json or args.json_objects)
 	check_status = CHECK_OK
-	told = set()  # the commands whose cut note was printed
-	# --check: the checked columns a command --timeout stopped can hide. A filter drops a row only on a value that was
-	# read (get_drives_info), so a stopped command hides a check only where its answer is the check's input: mount lists
-	# the mounted filesystems (their FSUSE%, and with -M the rows), and a pattern (not -D) matches any cell it fills.
+	told = set()  # the commands whose note was printed
+	# --check: the checked columns a command that did not answer in full (stopped by --timeout, not found or failed) can
+	# hide. A filter drops a row only on a value that was read (get_drives_info), so such a command hides a check only
+	# where its answer is the check's input: mount lists the mounted filesystems (their FSUSE%, and with -M the rows),
+	# and a pattern (not -D) matches any cell it fills.
 	patterns = bool(args.filter_patterns) and not args.match_devname_only
 	def cut_hides(command):
 		if patterns or (command == 'mount' and args.mounted_only):
@@ -1468,7 +1485,7 @@ def main():
 		return {'FSUSE%'} if command == 'mount' else set()
 	try:
 		while True:
-			cut = []
+			unanswered = {}
 			results = get_drives_info(print_bytes = args.bytes or args.json_objects, use_1024 = not args.si, 
 								mounted_only=args.mounted_only, best_only=args.best_only, 
 								formated_only=args.formated_only, show_zero_size_devices=args.show_zero_size_devices,
@@ -1476,19 +1493,17 @@ def main():
 								pseudo=args.pseudo,tptDict=tptDict,full=args.full,active_only=args.active_only,
 								output=args.output,exclude=args.exclude,
 								filter_patterns=args.filter_patterns,invert_match=args.invert_match,match_devname_only=args.match_devname_only,
-								timeout=args.timeout,debug=args.debug,cut=cut,
+								timeout=args.timeout,debug=args.debug,unanswered=unanswered,
 								)
 			if args.check:
 				read = results[0] if results else ()
 				results, check_status = check_rows(results, args.max_use)
 				if check_status == CHECK_OK:
-					# A cut that can hide what --check reads makes the run unknown; any other cut stays quiet.
-					if any(cut_hides(command).intersection(read) for command in cut):
+					# A command that can hide what --check reads makes the run unknown; any other stays quiet.
+					if any(cut_hides(command).intersection(read) for command in unanswered):
 						check_status = CHECK_UNKNOWN
 					else:
-						cut = []
-			# Only say why lsblk's columns may be incomplete when the output has rows and shows one of them.
-			note_due = bool(lsblk_note and sys.stderr is not None and len(results) > 1 and LSBLK_NOTE_FIELDS.intersection(results[0]))
+						unanswered = {}
 			if args.json_objects:
 				import json
 				# Watch mode streams NDJSON: one compact document per refresh.
@@ -1509,14 +1524,10 @@ def main():
 					clear = '\033[H\033[J' if redraw else ''
 					table = f"{clear}{header}\n{table}"
 				print(table,flush=True)
-			if note_due:
-				print(lsblk_note, file=sys.stderr, flush=True)
-				if not redraw:
-					lsblk_note = ''  # once per run, unless the next redraw wipes it
 			if sys.stderr is not None:
-				for command in cut:
+				for command, returncode in unanswered.items():
 					if command not in told:
-						print(cut_note(command, args.timeout), file=sys.stderr, flush=True)
+						print(cut_note(command, args.timeout, returncode), file=sys.stderr, flush=True)
 						if not redraw:
 							told.add(command)  # once per run, unless the next redraw wipes it
 			if print_period <= 0:

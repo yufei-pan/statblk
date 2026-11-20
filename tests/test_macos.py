@@ -14,9 +14,17 @@ def test_parse_darwin_mount_line():
     assert ent.FSTYPE == "apfs"
 
 
-def _diskutil_info(monkeypatch, lines, returncode=0):
+MOUNT = "/sbin/mount"  # where macOS keeps it
+
+
+def _darwin_commands(monkeypatch):
     monkeypatch.setattr(statblk, "IS_DARWIN", True)
     monkeypatch.setattr(statblk, "DISKUTIL_PATH", "/usr/sbin/diskutil")
+    monkeypatch.setattr(statblk, "MOUNT_PATH", MOUNT)
+
+
+def _diskutil_info(monkeypatch, lines, returncode=0):
+    _darwin_commands(monkeypatch)
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: FakeCmdResult(lines, returncode))
     return statblk.get_macos_diskutil_info(timeout=1)
 
@@ -55,15 +63,14 @@ def test_diskutil_stopped_mid_device_keeps_what_it_read(monkeypatch):
 def _darwin_machine(monkeypatch, dev=MACOS26_DEV, mount=(MACOS26_MOUNT, 0), diskutil=(MACOS26_DISKUTIL, 0)):
     """get_drives_info on the test Mac's own output: its /dev nodes, and mount and diskutil as (lines, return code);
     statvfs and smartctl faked."""
-    monkeypatch.setattr(statblk, "IS_DARWIN", True)
-    monkeypatch.setattr(statblk, "DISKUTIL_PATH", "/usr/sbin/diskutil")
+    _darwin_commands(monkeypatch)
     monkeypatch.setattr(statblk, "SMARTCTL_PATH", None)
     _fake_dev_listing(monkeypatch, [d[len("/dev/"):] for d in dev])
     monkeypatch.setattr(statblk, "is_block_device", lambda p: p in dev)
     monkeypatch.setattr(statblk, "get_statvfs_use_size", lambda mp, *a, **k: (1000, 350, 650))
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     monkeypatch.setattr(statblk.multiCMD, "run_command",
-                        lambda command, **k: FakeCmdResult(*(mount if command == "mount" else diskutil)))
+                        lambda command, **k: FakeCmdResult(*(mount if command == MOUNT else diskutil)))
 
 
 def _names(rows):
@@ -115,7 +122,7 @@ def test_darwin_sealed_root_listed_without_pseudo(monkeypatch):
     monkeypatch.setattr(statblk, "IS_DARWIN", True)
     _fake_dev_listing(monkeypatch, ["disk3", "disk3s1", "disk3s1s1"])
     mounts = defaultdict(list, {"/dev/disk3s1s1": [statblk.MountEntry("/", "apfs", ["apfs", "sealed"])]})
-    monkeypatch.setattr(statblk, "parseMount", lambda timeout=0, cut=None: mounts)
+    monkeypatch.setattr(statblk, "parseMount", lambda timeout=0, unanswered=None: mounts)
     monkeypatch.setattr(statblk, "is_block_device", lambda p: True)
     monkeypatch.setattr(statblk, "get_statvfs_use_size", lambda mp, *a, **k: (1000, 350, 650))
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
@@ -128,13 +135,13 @@ def test_darwin_sealed_root_listed_without_pseudo(monkeypatch):
 def test_darwin_formated_only_without_fstype_column(monkeypatch, output):
     monkeypatch.setattr(statblk, "IS_DARWIN", True)
     _fake_dev_listing(monkeypatch, ["disk4s1", "disk4s2"])
-    monkeypatch.setattr(statblk, "parseMount", lambda timeout=0, cut=None: defaultdict(list))
+    monkeypatch.setattr(statblk, "parseMount", lambda timeout=0, unanswered=None: defaultdict(list))
     monkeypatch.setattr(statblk, "is_block_device", lambda p: True)
     info = {
         "/dev/disk4s1": {"SIZE_BYTES": 1000, "FSTYPE": "ExFAT"},
         "/dev/disk4s2": {"SIZE_BYTES": 2000, "FSTYPE": ""},
     }
-    monkeypatch.setattr(statblk, "get_macos_diskutil_info", lambda timeout=0, cut=None, failed=None: info)
+    monkeypatch.setattr(statblk, "get_macos_diskutil_info", lambda timeout=0, unanswered=None: info)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
     rows = statblk.get_drives_info(output=output, formated_only=True, timeout=2)
     assert [r[0] for r in rows[1:]] == ["disk4s1"]
@@ -147,8 +154,7 @@ def test_darwin_formated_only_without_fstype_column(monkeypatch, output):
     (0.5, 0.5),
 ])
 def test_darwin_diskutil_and_mount_get_the_timeout(monkeypatch, timeout, expected):
-    monkeypatch.setattr(statblk, "IS_DARWIN", True)
-    monkeypatch.setattr(statblk, "DISKUTIL_PATH", "/usr/sbin/diskutil")
+    _darwin_commands(monkeypatch)
     _fake_dev_listing(monkeypatch, ["disk3", "disk3s1"])
     monkeypatch.setattr(statblk, "is_block_device", lambda p: True)
     monkeypatch.setattr(statblk, "get_statvfs_use_size", lambda mp, *a, **k: (1000, 350, 650))
@@ -157,7 +163,7 @@ def test_darwin_diskutil_and_mount_get_the_timeout(monkeypatch, timeout, expecte
 
     def fake_run_command(command, timeout=0, **kwargs):
         calls[command.split()[0].rsplit("/", 1)[-1]] = timeout
-        if command == "mount":
+        if command == MOUNT:
             return FakeCmdResult(DARWIN_MOUNT_SAMPLE)
         return FakeCmdResult(MACOS26_DISKUTIL)
 
@@ -166,59 +172,44 @@ def test_darwin_diskutil_and_mount_get_the_timeout(monkeypatch, timeout, expecte
     assert calls == {"diskutil": expected, "mount": expected}
 
 
-@pytest.mark.parametrize("returncode, expected", [(124, ["diskutil", "mount"]), (0, []), (1, [])])
-def test_diskutil_and_mount_stopped_by_the_timeout_are_recorded(monkeypatch, returncode, expected):
-    # 124 is multiCMD's return code for a command it stopped at the timeout; what it printed before is still read.
-    monkeypatch.setattr(statblk, "IS_DARWIN", True)
-    monkeypatch.setattr(statblk, "DISKUTIL_PATH", "/usr/sbin/diskutil")
+@pytest.mark.parametrize("returncode", [124, 0, 1, 127], ids=["stopped", "answered", "failed", "not found"])
+def test_diskutil_and_mount_that_did_not_answer_are_recorded(monkeypatch, returncode):
+    # 124 is multiCMD's return code for a command it stopped at the timeout, 127 for one it did not find; what a
+    # command printed before is still read.
+    _darwin_commands(monkeypatch)
 
     def fake_run_command(command, timeout=0, **kwargs):
-        if command == "mount":
+        if command == MOUNT:
             return FakeCmdResult(DARWIN_MOUNT_SAMPLE, returncode)
         return FakeCmdResult(MACOS26_DISKUTIL, returncode)
 
     monkeypatch.setattr(statblk.multiCMD, "run_command", fake_run_command)
-    cut = []
-    assert "/dev/disk3s1" in statblk.get_macos_diskutil_info(timeout=1, cut=cut)
-    assert list(statblk.parseMount(1, cut=cut)) == ["/dev/disk3s1"]
-    assert cut == expected
+    unanswered = {}
+    assert "/dev/disk3s1" in statblk.get_macos_diskutil_info(timeout=1, unanswered=unanswered)
+    assert list(statblk.parseMount(1, unanswered=unanswered)) == ["/dev/disk3s1"]
+    assert unanswered == ({} if returncode == 0 else {"diskutil": returncode, "mount": returncode})
 
 
-@pytest.mark.parametrize("returncode, cut, failed", [(124, ["diskutil"], []), (0, [], []), (1, [], ["diskutil"])])
-def test_diskutil_that_failed_is_recorded_apart_from_one_the_timeout_stopped(monkeypatch, returncode, cut, failed):
-    # An error exit is not a stop at -t: it has no stderr note, but its output may end in the middle of a device.
-    info = _diskutil_info_lists(monkeypatch, MACOS26_DISKUTIL, returncode)
-    assert (info["cut"], info["failed"]) == (cut, failed)
-
-
-def _diskutil_info_lists(monkeypatch, lines, returncode):
-    monkeypatch.setattr(statblk, "IS_DARWIN", True)
-    monkeypatch.setattr(statblk, "DISKUTIL_PATH", "/usr/sbin/diskutil")
-    monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: FakeCmdResult(lines, returncode))
-    lists = {"cut": [], "failed": []}
-    statblk.get_macos_diskutil_info(timeout=1, **lists)
-    return lists
-
-
-@pytest.mark.parametrize("returncode, expected", [(124, ["diskutil", "mount"]), (0, [])])
-def test_get_drives_info_passes_cut_to_diskutil_and_mount(monkeypatch, returncode, expected):
-    # The whole path: what main() prints and decides from comes through get_drives_info's own `cut`.
-    monkeypatch.setattr(statblk, "IS_DARWIN", True)
-    monkeypatch.setattr(statblk, "DISKUTIL_PATH", "/usr/sbin/diskutil")
+@pytest.mark.parametrize("returncode, expected", [(124, ["diskutil", "mount"]), (0, []), (1, [])])
+def test_get_drives_info_records_diskutil_and_mount(monkeypatch, returncode, expected):
+    # The whole path: what main() prints and decides from comes through get_drives_info's own record; its `cut` list
+    # (1.62) still gets what the timeout stopped.
+    _darwin_commands(monkeypatch)
     _fake_dev_listing(monkeypatch, ["disk3", "disk3s1"])
     monkeypatch.setattr(statblk, "is_block_device", lambda p: True)
     monkeypatch.setattr(statblk, "get_statvfs_use_size", lambda mp, *a, **k: (1000, 350, 650))
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
 
     def fake_run_command(command, timeout=0, **kwargs):
-        if command == "mount":
+        if command == MOUNT:
             return FakeCmdResult(DARWIN_MOUNT_SAMPLE, returncode)
         return FakeCmdResult(MACOS26_DISKUTIL, returncode)
 
     monkeypatch.setattr(statblk.multiCMD, "run_command", fake_run_command)
-    cut = []
-    rows = statblk.get_drives_info(output="NAME,SIZE,MOUNTPOINT", timeout=2, cut=cut)
+    cut, unanswered = [], {}
+    rows = statblk.get_drives_info(output="NAME,SIZE,MOUNTPOINT", timeout=2, cut=cut, unanswered=unanswered)
     assert cut == expected
+    assert unanswered == ({} if returncode == 0 else {"diskutil": returncode, "mount": returncode})
     assert [r[0] for r in rows[1:]] == ["disk3", "disk3s1"]  # disk3, unmounted, has its diskutil size
 
 
@@ -233,17 +224,28 @@ def test_a_silent_diskutil_and_mount_are_stopped_and_recorded(monkeypatch, tmp_p
 
     monkeypatch.setattr(statblk, "IS_DARWIN", True)
     monkeypatch.setattr(statblk, "DISKUTIL_PATH", silent("diskutil", "Device Node: /dev/disk3s1"))
-    silent("mount", DARWIN_MOUNT_SAMPLE[0])
-    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ.get("PATH", ""))
-    cut = []
+    monkeypatch.setattr(statblk, "MOUNT_PATH", silent("mount", DARWIN_MOUNT_SAMPLE[0]))
+    unanswered = {}
     start = time.monotonic()
     # 0.3 s because the first line is read before the stop in 30 of 30 runs at 0.02 s (Python 3.6 and 3.11, load
     # average 13 to 40 on 32 cores, 2026-11-15), so it is 15 times what the test needs.
-    info = statblk.get_macos_diskutil_info(timeout=0.3, cut=cut)
-    mounts = statblk.parseMount(0.3, cut=cut)
+    info = statblk.get_macos_diskutil_info(timeout=0.3, unanswered=unanswered)
+    mounts = statblk.parseMount(0.3, unanswered=unanswered)
     assert time.monotonic() - start < 10
-    assert cut == ["diskutil", "mount"]
+    assert unanswered == {"diskutil": 124, "mount": 124}
     assert "/dev/disk3s1" in info and "/dev/disk3s1" in mounts
+
+
+def test_a_missing_diskutil_and_mount_are_recorded_as_not_found(monkeypatch, tmp_path):
+    # Through the real multiCMD: a command it cannot find answers 127 (cron's PATH on macOS, /usr/bin:/bin, has
+    # neither /usr/sbin/diskutil nor /sbin/mount; statblk looks in the sbin directories too, see find_command).
+    monkeypatch.setattr(statblk, "IS_DARWIN", True)
+    monkeypatch.setattr(statblk, "DISKUTIL_PATH", str(tmp_path / "diskutil"))
+    monkeypatch.setattr(statblk, "MOUNT_PATH", str(tmp_path / "mount"))
+    unanswered = {}
+    assert statblk.get_macos_diskutil_info(timeout=2, unanswered=unanswered) == {}
+    assert statblk.parseMount(2, unanswered=unanswered) == {}
+    assert unanswered == {"diskutil": 127, "mount": 127}
 
 
 # The row rule: a filter drops a row only on a value that was read.

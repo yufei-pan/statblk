@@ -55,18 +55,19 @@ def _make_executable(path):
     return path
 
 
-def test_find_smartctl_falls_back_to_sbin_dirs(tmp_path, monkeypatch):
-    # Debian's non-root PATH omits /usr/sbin where smartmontools installs.
+def test_find_command_falls_back_to_sbin_dirs(tmp_path, monkeypatch):
+    # Debian's non-root PATH omits /usr/sbin where smartmontools installs, and macOS cron's PATH (/usr/bin:/bin) omits
+    # /usr/sbin/diskutil and /sbin/mount.
     user_bin = tmp_path / "bin"
     user_bin.mkdir()
     sbin = tmp_path / "sbin"
     sbin.mkdir()
     smartctl = _make_executable(sbin / "smartctl")
     monkeypatch.setenv("PATH", str(user_bin))
-    assert statblk.find_smartctl(fallback_dirs=[str(sbin)]) == str(smartctl)
+    assert statblk.find_command("smartctl", fallback_dirs=[str(sbin)]) == str(smartctl)
 
 
-def test_find_smartctl_prefers_path(tmp_path, monkeypatch):
+def test_find_command_prefers_path(tmp_path, monkeypatch):
     user_bin = tmp_path / "bin"
     user_bin.mkdir()
     on_path = _make_executable(user_bin / "smartctl")
@@ -74,9 +75,9 @@ def test_find_smartctl_prefers_path(tmp_path, monkeypatch):
     sbin.mkdir()
     _make_executable(sbin / "smartctl")
     monkeypatch.setenv("PATH", str(user_bin))
-    assert statblk.find_smartctl(fallback_dirs=[str(sbin)]) == str(on_path)
+    assert statblk.find_command("smartctl", fallback_dirs=[str(sbin)]) == str(on_path)
 
 
-def test_find_smartctl_missing(tmp_path, monkeypatch):
+def test_find_command_missing(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path))
-    assert statblk.find_smartctl(fallback_dirs=[str(tmp_path)]) is None
+    assert statblk.find_command("smartctl", fallback_dirs=[str(tmp_path)]) is None
