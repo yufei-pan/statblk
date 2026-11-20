@@ -641,7 +641,8 @@ def parse_mountinfo_line(line):
 	>>> parse_mountinfo_line('too short') is None
 	True
 	"""
-	parts = line.strip().split()
+	# split on ' ' only: the kernel escapes space, tab, newline and backslash, so split() would also cut a mount point at U+00A0
+	parts = line.rstrip('\n').split(' ')
 	if len(parts) < 10:
 		return None
 	try:
@@ -668,8 +669,8 @@ def _real_device(source):
 
 def parse_darwin_mount_line(line):
 	"""Parse one macOS mount(8) output line, `SOURCE on MOUNTPOINT (OPTIONS)`, into (device, MountEntry). The source
-	runs to the first " on ", the options are in the last parentheses, and the mount point is what lies between, so
-	either may hold spaces, and the mount point " (".
+	runs to the first " on /" (a mount point is absolute), the options are in the last parentheses, and the mount
+	point is what lies between, so either may hold spaces, and the mount point " (".
 
 	>>> dev, ent = parse_darwin_mount_line('/dev/disk3s1 on / (apfs, local, journaled)')
 	>>> ent.MOUNTPOINT, ent.FSTYPE, ent.OPTIONS[1]
@@ -678,10 +679,12 @@ def parse_darwin_mount_line(line):
 	'//me@nas/My Share'
 	>>> parse_darwin_mount_line('/dev/disk4s1 on /Volumes/Backup (old) (msdos, local)')[1].MOUNTPOINT
 	'/Volumes/Backup (old)'
+	>>> parse_darwin_mount_line('//me@nas/Music on NAS on /Volumes/Music (smbfs, nodev)')[0]
+	'//me@nas/Music on NAS'
 	>>> parse_darwin_mount_line('not a mount line') is None
 	True
 	"""
-	match = re.match(r"^(.+?)\s+on\s+(.+)\s+\(([^()]*)\)$", line)
+	match = re.match(r"^(.+?)\s+on\s+(/.*)\s+\(([^()]*)\)$", line)
 	if not match:
 		return None
 	device_name = _real_device(match.group(1))

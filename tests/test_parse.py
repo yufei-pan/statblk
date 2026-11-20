@@ -46,6 +46,13 @@ def test_mountinfo_mountpoint_with_backslash():
     assert ent.MOUNTPOINT == "/mnt/back\\slash"
 
 
+def test_mountinfo_mountpoint_with_no_break_space_and_ideographic_space():
+    # The kernel escapes only space, tab, newline and backslash; str.split() also cut a mount point at U+00A0 or U+3000,
+    # so the row got a wrong mount point (and a wrong FSUSE%).
+    dev, ent = statblk.parse_mountinfo_line("100 99 8:1 / /mnt/a\u00a0b\u3000c rw,relatime - ext4 /dev/sdz1 rw")
+    assert (dev, ent.MOUNTPOINT, ent.FSTYPE, ent.OPTIONS) == ("/dev/sdz1", "/mnt/a\u00a0b\u3000c", "ext4", ["rw", "relatime"])
+
+
 def test_build_symlink_dict_decodes_udev_escapes(tmp_path):
     target = tmp_path / "sdz1"
     target.write_text("")

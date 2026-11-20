@@ -31,7 +31,9 @@ def _darwin_commands(monkeypatch):
     ("map auto_home on /System/Volumes/Data/home (autofs, automounted, nobrowse)", "map auto_home",
      "/System/Volumes/Data/home", "autofs"),
     ("/dev/disk5s1 on /Volumes/Work on Mac (apfs, local)", "/dev/disk5s1", "/Volumes/Work on Mac", "apfs"),
-], ids=["space in the source", "parenthesis in the mount point", "autofs map", "on in the mount point"])
+    ("//me@nas/Music on NAS on /Volumes/Music (smbfs, nodev, nosuid)", "//me@nas/Music on NAS", "/Volumes/Music", "smbfs"),
+], ids=["space in the source", "parenthesis in the mount point", "autofs map", "on in the mount point",
+        "on in the source"])
 def test_parse_darwin_mount_line_with_spaces(line, source, mountpoint, fstype):
     # 1.63 read the source as one word and the mount point up to the first " (": the share never became a row, and
     # the volume's statvfs ran on "/Volumes/Backup" (FSUSE% ERROR).
