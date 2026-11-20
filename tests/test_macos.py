@@ -294,10 +294,12 @@ def test_a_silent_diskutil_and_mount_are_stopped_and_recorded(monkeypatch, tmp_p
     monkeypatch.setattr(statblk, "MOUNT_PATH", silent("mount", DARWIN_MOUNT_SAMPLE[0]))
     unanswered = {}
     start = time.monotonic()
-    # 0.3 s because the first line is read before the stop in 30 of 30 runs at 0.02 s (Python 3.6 and 3.11, load
-    # average 13 to 40 on 32 cores, 2026-11-15), so it is 15 times what the test needs.
-    info = statblk.get_macos_diskutil_info(timeout=0.3, unanswered=unanswered)
-    mounts = statblk.parseMount(0.3, unanswered=unanswered)
+    # The fakes must print their first line within the timeout. On the test Mac, 800 fresh scripts run through
+    # multiCMD printed it in 0.110 to 0.227 s (median 0.128 s; 2026-11-20, beside another suite), on Linux in about
+    # 0.02 s (30 runs, load 13 to 40 on 32 cores, 2026-11-15). 1.5 s is 6.6 times the slowest; 1.63's 0.3 s was 1.3
+    # times, and failed one Mac run in 20.
+    info = statblk.get_macos_diskutil_info(timeout=1.5, unanswered=unanswered)
+    mounts = statblk.parseMount(1.5, unanswered=unanswered)
     assert time.monotonic() - start < 10
     assert unanswered == {"diskutil": 124, "mount": 124}
     assert "/dev/disk3s1" in info and "/dev/disk3s1" in mounts
