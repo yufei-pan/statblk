@@ -112,7 +112,7 @@ def test_mountinfo_mount_point_that_is_not_utf8_reaches_statvfs_intact(tmp_path,
 
 @pytest.mark.skipif(sys.platform != "linux", reason="mountinfo is Linux's")
 def test_mountinfo_utf8_mount_point_reaches_statvfs_in_the_c_locale(tmp_path):
-    # Python 3.6 in the C locale (EL7 and EL8 under cron) encodes paths as ASCII: a UTF-8 mount point read as UTF-8
+    # Python 3.6 in the C locale (EL8's under cron) encodes paths as ASCII: a UTF-8 mount point read as UTF-8
     # could not be encoded for statvfs. Read as the filesystem encoding reads paths, it goes back as the same bytes.
     # (Python 3.7 and later take the C locale for UTF-8, where both ways work.)
     # The directory is made from bytes, so a runner in the C locale (Python 3.6 would not encode "caf\u00e9") works too.

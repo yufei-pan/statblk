@@ -269,7 +269,7 @@ def find_command(name, fallback_dirs=SBIN_DIRS):
 	return shutil.which(name) or shutil.which(name, path=os.pathsep.join(fallback_dirs))
 
 SMARTCTL_PATH = find_command("smartctl")
-# Not found: run by name, so multiCMD answers 127 and the command is named on stderr as not found.
+# Not found: run by name, so multiCMD answers 127 (statblk's note names the command on stderr).
 DISKUTIL_PATH = find_command("diskutil") or "diskutil"
 MOUNT_PATH = find_command("mount") or "mount"
 IS_DARWIN = (sys.platform == "darwin")
@@ -1044,13 +1044,15 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 					filter_patterns=None,invert_match=False,match_devname_only=False,timeout=None,
 					debug=False,cut=None,unanswered=None):
 	"""Rows of the table, header first. unanswered: a dict that gets, for each command that did not answer in full
-	('diskutil', 'mount', 'lsblk'; see CUT_WHAT), its return code: 124 the timeout stopped it (or it was still running
-	at the deadline), 127 not found, any other it failed. cut: a list that gets the name of each command the timeout
+	('diskutil', 'mount', 'lsblk'; see CUT_WHAT) and whose answer a collected column needs (lsblk: FSTYPE, UUID, MODEL
+	or SERIAL, or -F), its return code: 124 the timeout stopped it (or it was still running at the deadline), 127 not
+	found, any other it failed. cut: a list that gets the name of each command the timeout
 	stopped (as in 1.62; unanswered has them too).
 
-	A filter drops a row only on a value that was read: a SIZE diskutil or sysfs did not give is not a zero size, a
-	blank FSTYPE whose source did not answer in full is not "no filesystem", and throughput not read (macOS has none to
-	read) is not idle. Such a row stays, with SIZE, FSTYPE, READ or WRITE blank. A mount whose statvfs failed stays
+	-F, -A and the size filters drop a row only on a value that was read: a SIZE diskutil or sysfs did not give is not
+	a zero size, a blank FSTYPE whose source did not answer in full is not "no filesystem", and throughput not read
+	(macOS has none to read) is not idle. Such a row stays, with SIZE, FSTYPE, READ or WRITE blank. A pattern is matched
+	against what was read, so it can still drop a row whose value was not. A mount whose statvfs failed stays
 	too, with SIZE blank and FSUSE% ERROR (one that hung: TIMEOUT)."""
 	global _DEBUG_MODE
 	if debug:
@@ -1480,7 +1482,7 @@ def main():
 				read = results[0] if results else ()
 				results, check_status = check_rows(results, args.max_use)
 				if check_status == CHECK_OK:
-					# A command that can hide what --check reads makes the run unknown; any other stays quiet.
+					# A command that can hide what --check reads makes the run unknown; any other stays quiet on exit 0.
 					if any(cut_hides(command).intersection(read) for command in unanswered):
 						check_status = CHECK_UNKNOWN
 					else:
