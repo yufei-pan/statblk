@@ -470,6 +470,25 @@ def test_linux_statvfs_error_still_shows_the_failing_disk(monkeypatch, capsys, t
     assert _run(monkeypatch, capsys, ["--check", "-t", "2"] + argv, run, usage=error) == (1, names, "T\n", "")
 
 
+@pytest.mark.parametrize("usage, cell", [(DENIED, "ERROR"), (None, "TIMEOUT")], ids=["error", "hang"])
+def test_linux_watch_keeps_an_idle_devices_failed_mount_after_the_first_refresh(monkeypatch, capsys, tmp_path, usage,
+                                                                                 cell):
+    # Watch mode turns -A on after its first refresh, and every device here reads as idle: sda1's mount row, whose
+    # statvfs fails or hangs, stays in the second table (1.63 showed it once).
+    run = _linux(monkeypatch, tmp_path, "/dev/none")
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            raise KeyboardInterrupt()
+
+    monkeypatch.setattr(statblk.time, "sleep", sleep)
+    code, tables, out, err = _run_tables(monkeypatch, capsys, ["-w", "1", "-t", "2", "-o", "NAME,FSUSE%"], run, usage)
+    assert code == 130 and len(tables) == 2
+    assert ["sda1", cell] in tables[0] and tables[1][1:] == [["sda1", cell]]
+
+
 # The cut rule, one case per cell, through the real get_drives_info: a healthy host whose command --timeout stopped
 # before it printed anything. A stopped command hides a checked column from the check only where its answer is that
 # column's input: macOS's mount lists the mounted filesystems (their FSUSE%, and with -M the rows that carry the SMART),

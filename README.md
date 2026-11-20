@@ -96,7 +96,7 @@ From the second watch refresh on, READ / WRITE are **live rates**: bytes transfe
 | `-F`, `-fo`, `--formated_only` | Only entries with a filesystem type (one whose type could not be read stays, `FSTYPE` blank) |
 | `-M`, `-mo`, `--mounted_only` | Only mounted devices |
 | `-B`, `-bo`, `--best_only` | Shortest mount point per device |
-| `-A`, `-ao`, `--active_only` | Only devices with read/write activity (since boot on the first query, during the last interval on later watch refreshes); a row with no throughput to read stays (every row on macOS, a `-P` filesystem) |
+| `-A`, `-ao`, `--active_only` | Only devices with read/write activity (since boot on the first query, during the last interval on later watch refreshes); a row with no throughput to read stays (every row on macOS, a `-P` filesystem), and so does a mount whose `FSUSE%` is `ERROR` or `TIMEOUT` |
 | `-P`, `--pseudo` | Include pseudo filesystems (tmpfs, nfs, cifs, …) |
 | `--show_zero_size_devices` | Include zero-size devices |
 | `--show_squashfs` | Include squashfs images on loop devices (snaps, AppImages), hidden by default |
@@ -127,7 +127,7 @@ statblk -w 3 sda   # same with explicit flag (flag wins if both are given)
 
 Each table refresh starts with a `watch(1)`-style header, `Every 2s on <hostname>: <date time>`. On a terminal the screen is redrawn in place; when output is piped or redirected every refresh is kept, so the log reads top to bottom. With `-j` / `-J`, watch mode prints one compact JSON document per line (NDJSON) so a reader can parse each refresh as it arrives; single-run JSON stays indented.
 
-The first table shows each device's since-boot READ / WRITE average and later refreshes show live rates (see [READ / WRITE numbers](#read--write-numbers)). After the first refresh, `--active_only` is enabled automatically so only busy devices are shown (it filters nothing on macOS, which has no throughput to read), unless you gave filter patterns: devices you named stay on screen even while idle. Each refresh re-reads mounts, labels, UUIDs, sizes, and per-drive sysfs info such as model/serial, so hot-swapped drives show up correctly (throughput iterators stay live across refreshes). Press Ctrl-C to stop (exit status 130).
+The first table shows each device's since-boot READ / WRITE average and later refreshes show live rates (see [READ / WRITE numbers](#read--write-numbers)). After the first refresh, `--active_only` is enabled automatically so only busy devices are shown (with the rows it keeps anyway: every row on macOS, the `-P` filesystems, a mount whose `FSUSE%` is `ERROR` or `TIMEOUT`), unless you gave filter patterns: devices you named stay on screen even while idle. Each refresh re-reads mounts, labels, UUIDs, sizes, and per-drive sysfs info such as model/serial, so hot-swapped drives show up correctly (throughput iterators stay live across refreshes). Press Ctrl-C to stop (exit status 130).
 
 If a filter pattern looks like a number, append `0` so it is not treated as the refresh interval (or use `-w` and keep the number as a filter):
 

@@ -35,13 +35,6 @@ Approved known limitations and deferrals. Reviewers: read this first, and don't 
 - Revisit when: statblk 1.64, started right after 1.63.
 - Plan (1.64): `if size_bytes is None ...`, with two cases in `test_diskutil_size_none_when_it_gave_none` (only `Volume Total Space`; `Disk Size` 0 plus `Volume Total Space`), or drop the fallback if no macOS that prints it can be named.
 
-### Watch mode: `-A` hides a device's `ERROR` or `TIMEOUT` mount row after the first refresh (deferred, 1.64)
-- Kind: deferred (1.64)
-- What the operator sees: `statblk -w SECONDS` with no pattern switches `-A` on after its first refresh, so a mount of an idle device whose `statvfs` fails (`ERROR`) or hangs (`TIMEOUT`) is shown once and then gone, and so are all the `-P` rows (the entry above). The comment in `get_drives_info()` says such a row is always shown; it is, on the first refresh only. A hang did the same in 1.62; `ERROR` is new in 1.63 (1.62 dropped the row as a size of 0). Run with a block device whose mount gives a `PermissionError`, and with a faked hang.
-- Why: the idle test of `-A` is applied before a device's mounts are read, so a mount that fails or hangs never gets to show it.
-- Revisit when: statblk 1.64, started right after 1.63.
-- Plan (1.64): a mount row that failed (`ERROR` or `TIMEOUT`) passes the active filter, as the comment says, and the `-P` rows with it; this reads `statvfs` for an idle device's mounts on every refresh.
-
 ### macOS: a mount line with a space in its source, or " (" in its mount point, is misread (deferred, 1.64)
 - Kind: deferred (1.64)
 - What the operator sees: with `-P`, a network mount whose source has a space (`//user@server/My Share on /Volumes/My Share (smbfs, ...)`) never becomes a row. A volume whose name has " (" in it (`/Volumes/Backup (old)`) is read at a cut-short mount point, so its statvfs fails: FSUSE% `ERROR`, and a healthy `--check` exits 3 (1.62 left the volume out of the table and its space unchecked, exit 0). Seen with a faked `mount` line (macOS `mount(8)`'s format), not on a Mac.

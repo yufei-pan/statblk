@@ -1170,11 +1170,12 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 				device_properties['SMART'] = smart_status[parent_name]
 			elif 'SMART' in output_fields_set and not SMARTCTL_PATH and has_smart(parent_name):
 				device_properties['SMART'] = 'NO SMARTCTL'
+		# -A drops a device only on throughput read as none (one not read, as on macOS, is not idle), and keeps a mount
+		# of it that failed, below
+		idle = False
 		if device_name in tptDict:
 			read_bps, write_bps = next(tptDict[device_name])
-			# -A drops a device only on throughput read as none: one not read (macOS has none to read) is not idle
-			if active_only and read_bps == 0 and write_bps == 0:
-				continue
+			idle = active_only and read_bps == 0 and write_bps == 0
 			device_properties['READ'] = '' if read_bps is None else format_rate(read_bps, print_bytes, use_1024)
 			device_properties['WRITE'] = '' if write_bps is None else format_rate(write_bps, print_bytes, use_1024)
 		if device_name in label_dict:
@@ -1199,19 +1200,19 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 					debug_exc('statvfs', e)
 					usage, not_read = None, 'ERROR'  # statvfs answered with an error
 				if usage is None:
-					# A hung or failing mount: always show it, it's what you'd want to see. No size was read, which is
-					# not a size of 0, so the row stays and FSUSE% says why it has no number.
+					# A hung or failing mount: always show it, it's what you'd want to see (-A too). No size was read,
+					# which is not a size of 0, so the row stays and FSUSE% says why it has no number.
 					device_properties['SIZE'] = ''
 					device_properties['FSUSE%'] = not_read
 					output_list.append([device_properties[output_field] for output_field in output_fields])
 					continue
 				size_bytes, used_bytes, avail_bytes = usage
-				if size_bytes == 0 and not show_zero_size_devices:
+				if idle or (size_bytes == 0 and not show_zero_size_devices):
 					continue
 				device_properties['FSUSE%'] = df_use_percent(used_bytes, avail_bytes)
 				device_properties['SIZE'] = format_size(size_bytes, print_bytes, use_1024)
 				output_list.append([device_properties[output_field] for output_field in output_fields])
-		else:
+		elif not idle:
 			device_properties['FSTYPE'] = fstype_dict.get(device_name, '')
 			# fstype_dict only holds non-empty types. Squashfs hiding is best effort
 			# here: it is only filled when FSTYPE is collected (an output column or -F).
@@ -1385,7 +1386,7 @@ def main():
 	parser.add_argument('-F','-fo','--formated_only', help="Show only formated filesystems", action="store_true")
 	parser.add_argument('-M','-mo','--mounted_only', help="Show only mounted filesystems", action="store_true")
 	parser.add_argument('-B','-bo','--best_only', help="Show only shortest mount point for each device", action="store_true")
-	parser.add_argument('-A','-ao','--active_only', help="Show only active devices (read/write activity since boot on the first query, during the last interval on later watch refreshes); a row with no throughput to read stays (every row on macOS, a -P filesystem)", action="store_true")
+	parser.add_argument('-A','-ao','--active_only', help="Show only active devices (read/write activity since boot on the first query, during the last interval on later watch refreshes); rows with no throughput to read (macOS, -P) and mounts that fail (FSUSE%% ERROR or TIMEOUT) stay", action="store_true")
 	parser.add_argument('-R','--full', help="Show full device information, do not collapse drive info when length > console length", action="store_true")
 	parser.add_argument('-P','--pseudo', help="Include pseudo file systems as well (tmpfs / nfs / cifs etc.)", action="store_true")
 	parser.add_argument('-o','--output', help="Specify which output columns to print.Use comma to separate columns. default: all available", default="all", type=str)

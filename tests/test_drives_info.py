@@ -670,6 +670,28 @@ def test_active_only_drops_only_a_device_read_as_idle(monkeypatch, throughput, k
                           "" if throughput[1] is None else str(throughput[1])]] if kept else [])
 
 
+@pytest.mark.parametrize("statvfs, kept", [
+    ("hang", [["sda1", "TIMEOUT", "/mnt/a"]]),
+    ("error", [["sda1", "ERROR", "/mnt/a"]]),
+    ("answers", []),
+])
+def test_active_only_keeps_an_idle_devices_mount_that_failed(monkeypatch, statvfs, kept):
+    # "A hung or failing mount: always show it" held only without -A: watch mode turns -A on after its first refresh,
+    # and an idle device's failed mount row went with the device. Its unmounted sibling sda2 still goes.
+    _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/sda2"], mounts=_mount_table("/dev/sda1", "/mnt/a"))
+    monkeypatch.setattr(statblk, "get_read_write_rate_throughput_iter", lambda p: iter(lambda: (0, 0), None))
+
+    def usage(mountpoint, timeout=None):
+        if statvfs == "error":
+            raise PermissionError(errno.EACCES, "denied")
+        return None if statvfs == "hang" else (1000, 350, 650)
+
+    monkeypatch.setattr(statblk, "get_statvfs_use_size", usage)
+    _patch_multicmd(monkeypatch, FakeCmdResult([], 0))
+    rows = statblk.get_drives_info(output="NAME,FSUSE%,MOUNTPOINT", active_only=True, timeout=2)
+    assert rows[1:] == kept
+
+
 def test_unmounted_device_whose_sysfs_size_cannot_be_read_stays_with_a_blank_size(monkeypatch):
     # lsblk gave no size (it failed) and sysfs no longer answers: not read is not a size of 0 (1.63 dropped the row).
     _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/sdb"], mounts=defaultdict(list))
