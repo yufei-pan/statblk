@@ -24,7 +24,7 @@ Optional shell tab completion:
 pip install 'statblk[completion]'
 ```
 
-Requires **Python 3.6+**. statblk carries a copy of [multiCMD](https://pypi.org/project/multiCMD/) (1.67): an installed multiCMD is used when it is at least as new, the copy otherwise.
+Requires **Python 3.6+**. statblk carries a copy of [multiCMD](https://pypi.org/project/multiCMD/) (1.68): an installed multiCMD is used when it is at least as new, the copy otherwise.
 
 ## Quick start
 
