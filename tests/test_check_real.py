@@ -430,6 +430,26 @@ def test_linux_zero_size_whole_disk_is_judged_through_its_partition(monkeypatch,
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"], run) == (1, ["sdb1"], "T\n", "")
 
 
+@pytest.mark.parametrize("lsblk", [([], NOT_FOUND), ([], CUT)], ids=["no lsblk", "lsblk stopped"])
+def test_linux_failing_disk_whose_sysfs_size_cannot_be_read_is_judged(monkeypatch, capsys, tmp_path, lsblk):
+    # With no size from lsblk, sdb's and sdb1's come from sysfs, which no longer answers (the disk is going away): not
+    # read is not a size of 0, so the rows stay, SIZE blank, and sdb's SMART is judged (1.63 dropped them, exit 0).
+    run = _linux(monkeypatch, tmp_path, "/dev/sdb", lsblk=lsblk)
+    monkeypatch.setattr(statblk, "read_size", lambda p: None if "sdb" in p else 1 << 30)
+    code, tables, out, err = _run_tables(monkeypatch, capsys, ["--check", "-t", "0.5", "-o", "NAME,SIZE"], run)
+    assert (code, out) == (1, "T\n")
+    size = tables[0][0].index("SIZE")
+    assert [(row[0], row[size]) for row in tables[0][1:]] == [("sdb", ""), ("sdb1", "")]
+
+
+def test_linux_active_only_judges_a_failing_disk_whose_stat_cannot_be_read(monkeypatch, capsys, tmp_path):
+    # -A drops a device read as idle; sdb's stat no longer answers, which is not idle (1.63 read it as 0 B/s, exit 0).
+    run = _linux(monkeypatch, tmp_path, "/dev/sdb")
+    monkeypatch.setattr(statblk, "get_read_write_rate_throughput_iter",
+                        lambda p: iter(lambda: (None, None) if "sdb" in p else (0, 0), None))
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-A"], run) == (1, ["sdb", "sdb1"], "T\n", "")
+
+
 @STATVFS_ERRORS
 @pytest.mark.parametrize("timeout", ["0", "2"], ids=["no limit", "in a thread"])
 def test_linux_statvfs_error_is_unknown_not_healthy(monkeypatch, capsys, tmp_path, error, timeout):

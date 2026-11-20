@@ -92,10 +92,18 @@ def test_unmounted_whole_disk_gets_its_size(monkeypatch):
     assert ["disk3s1s1", "1000B", "/"] in rows
 
 
-def test_throughput_zero_on_darwin(monkeypatch):
+def test_throughput_not_read_on_darwin(monkeypatch):
+    # macOS has no per-device throughput to read: READ and WRITE are blank, not a 0 B/s statblk never measured.
     monkeypatch.setattr(statblk, "IS_DARWIN", True)
     it = statblk.get_read_write_rate_throughput_iter("/dev/disk0")
-    assert next(it) == (0, 0)
+    assert next(it) == (None, None)
+
+
+def test_darwin_read_and_write_are_blank_and_null(monkeypatch):
+    _darwin_machine(monkeypatch)
+    rows = statblk.get_drives_info(output="NAME,READ,WRITE", timeout=2, print_bytes=True)
+    assert _names(rows) == ALL_NAMES and {(r[1], r[2]) for r in rows[1:]} == {("", "")}
+    assert {(o["READ"], o["WRITE"]) for o in statblk.rows_to_objects(rows)} == {(None, None)}
 
 
 def _fake_dev_listing(monkeypatch, entries):

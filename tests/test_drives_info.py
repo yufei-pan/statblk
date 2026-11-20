@@ -640,6 +640,45 @@ def test_formated_only_keeps_a_device_lsblk_did_not_list(monkeypatch):
     assert rows[1:] == [["sda1", "ext4"], ["sda3", ""]]
 
 
+def test_active_only_keeps_the_pseudo_rows(monkeypatch):
+    # -A filters the devices whose throughput it can read; a -P filesystem (tmpfs, nfs) has none, so it stays, as on
+    # macOS. 1.63 dropped every -P row on Linux.
+    mounts = defaultdict(list, {
+        "/dev/sda1": [statblk.MountEntry("/data", "ext4", ["rw"])],
+        "/dev/sdb1": [statblk.MountEntry("/idle", "ext4", ["rw"])],
+        "tmpfs": [statblk.MountEntry("/tmp", "tmpfs", ["rw"])],
+        "server:/export": [statblk.MountEntry("/mnt/nfs", "nfs4", ["rw"])],
+    })
+    _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/sdb1"], mounts=mounts)
+    monkeypatch.setattr(statblk, "is_block_device", lambda p: p.startswith("/dev/"))
+    monkeypatch.setattr(statblk, "get_read_write_rate_throughput_iter",
+                        lambda p: iter(lambda: (0, 0) if p.endswith("sdb1") else (100, 0), None))
+    _patch_multicmd(monkeypatch, FakeCmdResult([], 0))
+    rows = statblk.get_drives_info(output="NAME,MOUNTPOINT", pseudo=True, active_only=True, timeout=2)
+    assert rows[1:] == [["sda1", "/data"], ["server:/export", "/mnt/nfs"], ["tmpfs", "/tmp"]]
+
+
+@pytest.mark.parametrize("throughput, kept", [((0, 0), False), ((None, None), True), ((0, 5), True)],
+                         ids=["read as idle", "not read", "active"])
+def test_active_only_drops_only_a_device_read_as_idle(monkeypatch, throughput, kept):
+    # A stat that could not be read (the device vanished after the listing) is not idle; 1.63 read it as 0 B/s.
+    _patch_linux_basics(monkeypatch, devices=["/dev/sda1"])
+    monkeypatch.setattr(statblk, "get_read_write_rate_throughput_iter", lambda p: iter(lambda: throughput, None))
+    _patch_multicmd(monkeypatch, FakeCmdResult([], 0))
+    rows = statblk.get_drives_info(output="NAME,READ,WRITE", active_only=True, timeout=2, print_bytes=True)
+    assert rows[1:] == ([["sda1", "" if throughput[0] is None else str(throughput[0]),
+                          "" if throughput[1] is None else str(throughput[1])]] if kept else [])
+
+
+def test_unmounted_device_whose_sysfs_size_cannot_be_read_stays_with_a_blank_size(monkeypatch):
+    # lsblk gave no size (it failed) and sysfs no longer answers: not read is not a size of 0 (1.63 dropped the row).
+    _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/sdb"], mounts=defaultdict(list))
+    monkeypatch.setattr(statblk, "read_size", lambda p: None if p.endswith("sdb") else 0)
+    _patch_multicmd(monkeypatch, FakeCmdResult([], returncode=1))
+    rows = statblk.get_drives_info(output="NAME,SIZE", timeout=2)
+    assert rows[1:] == [["sdb", ""]]  # sda1's size was read as 0: hidden as before
+
+
 def _hardware_and_virtual(tmp_path, monkeypatch):
     make_sysfs_block(tmp_path, "sda", size_sectors=1)  # physical: has device/
     make_sysfs_block(tmp_path, "loop0", size_sectors=1, with_device=False)

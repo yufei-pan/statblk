@@ -16,7 +16,7 @@ Approved known limitations and deferrals. Reviewers: read this first, and don't 
 
 ### `--check` does not judge a whole disk whose size reads zero
 - Kind: known limitation
-- What the operator sees: statblk hides a device whose size reads 0 (an empty card-reader slot, empty virtual media) unless `--show_zero_size_devices`. A partition row carries its parent's SMART, so a failing disk is still judged through any partition row that is shown; a whole disk of size 0 with no partition row shown goes unjudged by a plain `statblk --check` (exit 0, nothing printed). `statblk --check --show_zero_size_devices` judges it. On Linux, with `lsblk` stopped or missing, a size that cannot be read counts as 0 too (the deferred entry "Linux: an unreadable sysfs size or stat reads as 0", below).
+- What the operator sees: statblk hides a device whose size reads 0 (an empty card-reader slot, empty virtual media) unless `--show_zero_size_devices`. A partition row carries its parent's SMART, so a failing disk is still judged through any partition row that is shown; a whole disk of size 0 with no partition row shown goes unjudged by a plain `statblk --check` (exit 0, nothing printed). `statblk --check --show_zero_size_devices` judges it.
 - Why: the zero-size rule keeps an empty slot from showing as a disk, and `--check` judges the rows the table shows. Reproduced with fake commands only, not on a real disk; 1.62 and 1.61 did the same.
 - Revisit when: someone sees it on a real disk, or measures what smartctl answers for one.
 - Approved: 2026-11-16, chief's decision C78 (the user's desk session; not the user's words): option (1), a known limitation with one README line.
@@ -35,20 +35,6 @@ Approved known limitations and deferrals. Reviewers: read this first, and don't 
 - Revisit when: statblk 1.64, started right after 1.63.
 - Plan (1.64): `if size_bytes is None ...`, with two cases in `test_diskutil_size_none_when_it_gave_none` (only `Volume Total Space`; `Disk Size` 0 plus `Volume Total Space`), or drop the fallback if no macOS that prints it can be named.
 
-### Linux: an unreadable sysfs size or stat reads as 0 (deferred, 1.64)
-- Kind: deferred (1.64)
-- What the operator sees: with `lsblk` stopped or missing, a sysfs `size` that cannot be read (a device that vanished between the listing and the read) reads as 0 and drops the row; `-A` drops a device whose sysfs `stat` cannot be read as idle. A failing disk that is only that row exits 0. A race, so rare. 1.62 did the same.
-- Why: `read_int()` returns 0 on any failure, and the throughput iterator yields `0, 0`.
-- Revisit when: statblk 1.64, started right after 1.63.
-- Plan (1.64): both give None for "not read", as macOS's size does, and the filters drop only a value that was read; with tests that force the failure.
-
-### Linux: `-A` drops the `-P` pseudo rows (deferred, 1.64)
-- Kind: deferred (1.64)
-- What the operator sees: `statblk -A -P` drops every pseudo filesystem row (tmpfs, nfs...) because they have no throughput iterator, while macOS keeps them. 1.62 did the same.
-- Why: the `-A` test is `device_name not in tptDict`, true for a mount that is no block device.
-- Revisit when: statblk 1.64, started right after 1.63.
-- Plan (1.64): `-A` filters only devices that have a throughput to read.
-
 ### Watch mode: `-A` hides a device's `ERROR` or `TIMEOUT` mount row after the first refresh (deferred, 1.64)
 - Kind: deferred (1.64)
 - What the operator sees: `statblk -w SECONDS` with no pattern switches `-A` on after its first refresh, so a mount of an idle device whose `statvfs` fails (`ERROR`) or hangs (`TIMEOUT`) is shown once and then gone, and so are all the `-P` rows (the entry above). The comment in `get_drives_info()` says such a row is always shown; it is, on the first refresh only. A hang did the same in 1.62; `ERROR` is new in 1.63 (1.62 dropped the row as a size of 0). Run with a block device whose mount gives a `PermissionError`, and with a faked hang.
@@ -62,13 +48,6 @@ Approved known limitations and deferrals. Reviewers: read this first, and don't 
 - Why: `parse_darwin_mount_line()` reads the source as one word (`\S+`) and the mount point up to the first " (".
 - Revisit when: statblk 1.64, started right after 1.63.
 - Plan (1.64): read the source up to ` on ` and the options from the last parenthesis (`^(.+?)\s+on\s+(.+)\s+\(([^()]*)\)$`), with a test on each line. On Linux, read mountinfo with `errors='surrogateescape'`, so a non-UTF-8 mount path reaches statvfs intact.
-
-### macOS: READ and WRITE show `0 B/s` that was never read (deferred, 1.64)
-- Kind: deferred (1.64)
-- What the operator sees: READ and WRITE on macOS read `0 B/s` for every device, a number statblk did not measure, and `-J` gives 0 for it.
-- Why: the throughput iterator yields `0, 0` on macOS. 1.63 makes `-A` filter nothing there, where 1.62's `-A` dropped every row, since every device read `0 B/s`.
-- Revisit when: statblk 1.64, started right after 1.63.
-- Plan (1.64): blank cells (`null` in `-J`) on macOS, so the table says what it did not read.
 
 ### The macOS test of a silent `diskutil` and `mount` has a thin time margin (deferred, 1.64)
 - Kind: deferred (1.64)

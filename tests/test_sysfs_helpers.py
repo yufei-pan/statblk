@@ -9,6 +9,16 @@ def test_read_size_uses_512(tmp_path):
     assert statblk.read_size(str(block)) == 2048 * 512
 
 
+def test_read_size_none_when_it_cannot_be_read(tmp_path):
+    # A device that vanished between the listing and the read: no size was read, which is not a size of 0.
+    block = make_sysfs_block(tmp_path, "sda", size_sectors=2048)
+    (block / "size").unlink()
+    assert statblk.read_size(str(block)) is None
+    assert statblk.read_size(str(tmp_path / "gone")) is None
+    (block / "size").write_text("0\n")
+    assert statblk.read_size(str(block)) == 0
+
+
 def test_read_discard_yes_no(tmp_path):
     yes = make_sysfs_block(tmp_path, "sda", size_sectors=1, discard_max_bytes=4096)
     no = make_sysfs_block(tmp_path, "sdb", size_sectors=1, discard_max_bytes=0)

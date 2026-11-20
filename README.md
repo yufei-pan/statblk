@@ -69,7 +69,7 @@ The first query (a single run, or the first refresh of watch mode) does **not** 
 
 The kernel counts the time of every request separately, so a device with many requests in flight at once (e.g. NVMe under load) reports more busy time than wall-clock time, and its average reads lower than its real transfer speed.
 
-From the second watch refresh on, READ / WRITE are **live rates**: bytes transferred during the last interval divided by the wall-clock time of that interval. `-J` gives the same values as bytes per second.
+From the second watch refresh on, READ / WRITE are **live rates**: bytes transferred during the last interval divided by the wall-clock time of that interval. `-J` gives the same values as bytes per second. READ / WRITE are blank (`null` in `-J`) where statblk has none to read: on macOS, and for a device whose `stat` cannot be read.
 
 ## Options
 
@@ -96,7 +96,7 @@ From the second watch refresh on, READ / WRITE are **live rates**: bytes transfe
 | `-F`, `-fo`, `--formated_only` | Only entries with a filesystem type (one whose type could not be read stays, `FSTYPE` blank) |
 | `-M`, `-mo`, `--mounted_only` | Only mounted devices |
 | `-B`, `-bo`, `--best_only` | Shortest mount point per device |
-| `-A`, `-ao`, `--active_only` | Only devices with read/write activity (since boot on the first query, during the last interval on later watch refreshes); on macOS, which has no throughput to read, it filters nothing |
+| `-A`, `-ao`, `--active_only` | Only devices with read/write activity (since boot on the first query, during the last interval on later watch refreshes); a row with no throughput to read stays (every row on macOS, a `-P` filesystem) |
 | `-P`, `--pseudo` | Include pseudo filesystems (tmpfs, nfs, cifs, …) |
 | `--show_zero_size_devices` | Include zero-size devices |
 | `--show_squashfs` | Include squashfs images on loop devices (snaps, AppImages), hidden by default |
@@ -146,7 +146,7 @@ statblk -w 0 nvme0 # same via flag
 | `1` | Problem: `FSUSE%` at or above `--max_use` (default 90) or `TIMEOUT` (hung mount), or `SMART` reporting a failure — `FAILED!`, a vendor failure string, or `TIMEOUT` (smartctl stuck on the disk) |
 | `3` | Unknown: no problem found, but SMART couldn't be read on a disk — `NO SMARTCTL` (install smartmontools), `DENIED` (run as root or with `--sudo`) or `UNKNOWN` (no verdict, e.g. a disk behind a RAID controller) — or a mount's `FSUSE%` is `ERROR` (its disk's SMART still counts: a failing one is a problem), or a command that can hide what the check reads did not answer in full (see below) |
 
-A problem beats an unknown, and both kinds of rows are listed. A command that did not answer in full (stopped by `--timeout`, not found, or failed) counts only when the check depends on it: `mount` on macOS (FSUSE%, and with `-M` which disks are mounted: the disks it did not list are missing from the table too), or any command when a pattern (not `-D`) filters the rows. It is named on stderr, after the rows, only when the run exits `1` or `3`. Exit `3` exists so that "not checked" never looks like "healthy" in a sweep. For a space-only check use `-x SMART`; to skip a device that has no SMART at all (an SD card, a USB stick) filter it out, e.g. `statblk --check -D -v mmcblk`. `FSUSE%` and `SMART` are always added to the shown columns so you can see why a row failed; excluding one with `-x` turns that check off. Filters (`-F`, `-M`, `-B`, `-v` and patterns) and JSON output (`-j` / `-J`) work as usual, but filters narrow what is checked: `-M` skips disks with no mount of their own (md/LVM/ZFS/Ceph members, extra btrfs pool devices), a pattern skips a disk none of whose rows it matches, and `-F` skips a disk with no filesystem type (the Mac's own SSD, say), so cluster sweeps should run plain `--check`. A whole disk that reports a size of zero (on Linux, also one whose size cannot be read) and has no partition row to show is hidden, and so not checked, unless `--show_zero_size_devices` (a known limitation, [docs/limitations.md](docs/limitations.md)). `--check` can't be combined with watch mode.
+A problem beats an unknown, and both kinds of rows are listed. A command that did not answer in full (stopped by `--timeout`, not found, or failed) counts only when the check depends on it: `mount` on macOS (FSUSE%, and with `-M` which disks are mounted: the disks it did not list are missing from the table too), or any command when a pattern (not `-D`) filters the rows. It is named on stderr, after the rows, only when the run exits `1` or `3`. Exit `3` exists so that "not checked" never looks like "healthy" in a sweep. For a space-only check use `-x SMART`; to skip a device that has no SMART at all (an SD card, a USB stick) filter it out, e.g. `statblk --check -D -v mmcblk`. `FSUSE%` and `SMART` are always added to the shown columns so you can see why a row failed; excluding one with `-x` turns that check off. Filters (`-F`, `-M`, `-B`, `-v` and patterns) and JSON output (`-j` / `-J`) work as usual, but filters narrow what is checked: `-M` skips disks with no mount of their own (md/LVM/ZFS/Ceph members, extra btrfs pool devices), a pattern skips a disk none of whose rows it matches, and `-F` skips a disk with no filesystem type (the Mac's own SSD, say), so cluster sweeps should run plain `--check`. A whole disk that reports a size of zero and has no partition row to show is hidden, and so not checked, unless `--show_zero_size_devices` (a known limitation, [docs/limitations.md](docs/limitations.md)). `--check` can't be combined with watch mode.
 
 In every mode, Ctrl-C exits `130`, and when the reader closes the pipe before statblk has written everything (`statblk -w 2 | head`) the run ends quietly with `141` (128 + SIGPIPE).
 
@@ -169,7 +169,7 @@ Uses sysfs, `/proc/self/mountinfo`, `lsblk`, and optionally `smartctl`.
 
 ### macOS
 
-Uses `diskutil` and `mount`, found in `/usr/sbin` and `/sbin` too when `PATH` lacks them (cron's does). Throughput columns are always zero (no per-device sysfs stats), so `-A` filters nothing. APFS snapshot nodes such as the sealed system volume (`disk3s1s1` on `/`) are listed. Every device is listed, mounted or not, except one whose size reads 0 (shown with `--show_zero_size_devices`). `DISCARD` is `diskutil`'s `Solid State`.
+Uses `diskutil` and `mount`, found in `/usr/sbin` and `/sbin` too when `PATH` lacks them (cron's does). READ and WRITE are blank (`null` in `-J`): macOS has no per-device throughput to read, so `-A` filters nothing. APFS snapshot nodes such as the sealed system volume (`disk3s1s1` on `/`) are listed. Every device is listed, mounted or not, except one whose size reads 0 (shown with `--show_zero_size_devices`). `DISCARD` is `diskutil`'s `Solid State`.
 
 ## Upgrading to 1.63 from 1.62
 

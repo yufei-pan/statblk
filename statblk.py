@@ -619,10 +619,14 @@ def read_model_and_serial(sysfs_block_path):
 	return model, serial
 
 def read_size(sysfs_block_path):
+	"""Bytes from sysfs (the kernel counts 512-byte sectors), or None when they cannot be read (a device that vanished
+	after the listing): not read is not a size of 0."""
 	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
-		return 0
-	sectors = read_int(os.path.join(sysfs_block_path, "size"))
-	return sectors * 512 # linux kernel uses 512 byte sectors
+		return None
+	try:
+		return int(read_text(os.path.join(sysfs_block_path, "size"))) * 512
+	except (TypeError, ValueError):
+		return None
 
 MountEntry = namedtuple("MountEntry", ["MOUNTPOINT", "FSTYPE", "OPTIONS"])
 
@@ -802,79 +806,43 @@ def get_partition_parent_name(name):
 STAT_SECTOR_BYTES = 512
 
 def get_read_write_rate_throughput_iter(sysfs_block_path):
-	"""Yield (read_Bps, write_Bps) samples for a block device.
+	"""Yield (read_Bps, write_Bps) samples for a block device, (None, None) for one that could not be read: macOS,
+	which has no per-device throughput to read, a device gone from sysfs, an unreadable or short stat.
 
-	The first sample is a lifetime busy-time average: total bytes transferred
+	The first sample read is a lifetime busy-time average: total bytes transferred
 	divided by time spent doing I/O since boot (from the stat time fields).
 	That gives an immediate non-zero estimate without waiting for a poll interval.
 
 	Later samples are interval rates: delta bytes / wall-clock elapsed since the
-	previous sample (used by watch mode after the first refresh).
+	previous sample read (used by watch mode after the first refresh).
 	"""
-	if IS_DARWIN:
-		# Per-device throughput is Linux /sys stat based; return zeros on macOS.
+	if IS_DARWIN or not sysfs_block_path or not os.path.isdir(sysfs_block_path):
 		while True:
-			yield 0, 0
-	if not sysfs_block_path or not os.path.isdir(sysfs_block_path):
-		while True:
-			yield 0, 0
+			yield None, None
 	rx_path = os.path.join(sysfs_block_path, "stat")
-	start_time = time.monotonic()
-	sector_size = STAT_SECTOR_BYTES
-	previous_bytes_read = 0
-	previous_bytes_written = 0
-	try:
-		with open(rx_path, "r", encoding="utf-8", errors="ignore") as f:
-			fields = f.read().strip().split()
-		if len(fields) < 8:
-			yield 0, 0
-		else:
-			sectors_read = int(fields[2])
-			read_time = int(fields[3]) / 1000.0
-			sectors_written = int(fields[6])
-			write_time = int(fields[7]) / 1000.0
-			read_throughput = (sectors_read * sector_size) / read_time if read_time > 0 else 0
-			write_throughput = (sectors_written * sector_size) / write_time if write_time > 0 else 0
-			previous_bytes_read = sectors_read * sector_size
-			previous_bytes_written = sectors_written * sector_size
-			yield int(read_throughput), int(write_throughput)
-	except Exception as e:
-		debug_exc('throughput initial', e)
-		yield 0, 0
+	previous = None  # (time, bytes read, bytes written) of the last sample read
 	while True:
 		try:
 			with open(rx_path, "r", encoding="utf-8", errors="ignore") as f:
-				fields = f.read().strip().split()
-			if len(fields) < 7:
-				yield 0, 0
-				continue
-			# fields: https://www.kernel.org/doc/html/latest/block/stat.html
-			# 0 - reads completed successfully
-			# 1 - reads merged
-			# 2 - sectors read
-			# 3 - time spent reading (ms)
-			# 4 - writes completed
-			# 5 - writes merged
-			# 6 - sectors written
-			# 7 - time spent writing (ms)
-			# 8 - I/Os currently in progress
-			# 9 - time spent doing I/Os (ms)
-			# 10 - weighted time spent doing I/Os (ms)
-			sectors_read = int(fields[2])
-			sectors_written = int(fields[6])
-			bytes_read = sectors_read * sector_size
-			bytes_written = sectors_written * sector_size
-			end_time = time.monotonic()
-			elapsed_time = end_time - start_time
-			start_time = end_time
-			read_throughput = (bytes_read - previous_bytes_read) / elapsed_time if elapsed_time > 0 else 0
-			write_throughput = (bytes_written - previous_bytes_written) / elapsed_time if elapsed_time > 0 else 0
-			previous_bytes_read = bytes_read
-			previous_bytes_written = bytes_written
-			yield int(read_throughput), int(write_throughput)
-		except Exception as e:
-			debug_exc('throughput poll', e)
-			yield 0, 0
+				# fields: https://www.kernel.org/doc/html/latest/block/stat.html
+				# 2 - sectors read, 3 - time spent reading (ms), 6 - sectors written, 7 - time spent writing (ms)
+				fields = [int(x) for x in f.read().split()[:8]]
+			now = time.monotonic()
+			bytes_read, bytes_written = fields[2] * STAT_SECTOR_BYTES, fields[6] * STAT_SECTOR_BYTES
+			read_time, write_time = fields[3] / 1000.0, fields[7] / 1000.0
+		except (OSError, ValueError, IndexError) as e:
+			debug_exc('throughput', e)
+			yield None, None
+			continue
+		if previous is None:
+			read_throughput = bytes_read / read_time if read_time > 0 else 0
+			write_throughput = bytes_written / write_time if write_time > 0 else 0
+		else:
+			elapsed_time = now - previous[0]
+			read_throughput = (bytes_read - previous[1]) / elapsed_time if elapsed_time > 0 else 0
+			write_throughput = (bytes_written - previous[2]) / elapsed_time if elapsed_time > 0 else 0
+		previous = (now, bytes_read, bytes_written)
+		yield int(read_throughput), int(write_throughput)
 
 def natural_sort_key(text):
 	"""Sort key that orders embedded numbers numerically.
@@ -1061,9 +1029,9 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	at the deadline), 127 not found, any other it failed. cut: a list that gets the name of each command the timeout
 	stopped (as in 1.62; unanswered has them too).
 
-	A filter drops a row only on a value that was read: a SIZE diskutil did not give is not a zero size, a blank
-	FSTYPE whose source did not answer in full is not "no filesystem", and macOS throughput, which is never read, is
-	not idle. Such a row stays: SIZE or FSTYPE blank, READ and WRITE 0 on macOS. A mount whose statvfs failed stays
+	A filter drops a row only on a value that was read: a SIZE diskutil or sysfs did not give is not a zero size, a
+	blank FSTYPE whose source did not answer in full is not "no filesystem", and throughput not read (macOS has none to
+	read) is not idle. Such a row stays, with SIZE, FSTYPE, READ or WRITE blank. A mount whose statvfs failed stays
 	too, with SIZE blank and FSUSE% ERROR (one that hung: TIMEOUT)."""
 	global _DEBUG_MODE
 	if debug:
@@ -1074,8 +1042,6 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 		unanswered = {}
 	if tptDict is None:
 		tptDict = {}
-	# macOS has no per-device throughput (READ and WRITE show 0), so -A drops nothing there.
-	active_only = active_only and not IS_DARWIN
 	# One deadline for the whole refresh: a smartctl stuck in D-state on a dying
 	# disk can't be killed, so waiting `timeout` per partition would add up.
 	deadline = time.monotonic() + timeout if timeout else None
@@ -1165,8 +1131,6 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	for device_name in target_devices:
 		if mounted_only and device_name not in mount_table:
 			continue
-		if active_only and device_name not in tptDict:
-			continue
 		device_properties = defaultdict(str)
 		device_properties['NAME'] = display_device_name(get_mapper_path(device_name), full)
 		# fstype, size, fsuse%, mountpoint, rtpt, wtpt, lable, uuid are partition specific
@@ -1207,16 +1171,12 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 			elif 'SMART' in output_fields_set and not SMARTCTL_PATH and has_smart(parent_name):
 				device_properties['SMART'] = 'NO SMARTCTL'
 		if device_name in tptDict:
-			try:
-				read_bps, write_bps = next(tptDict[device_name])
-				if active_only and read_bps == 0 and write_bps == 0:
-					continue
-				device_properties['READ'] = format_rate(read_bps, print_bytes, use_1024)
-				device_properties['WRITE'] = format_rate(write_bps, print_bytes, use_1024)
-			except Exception as e:
-				debug_exc('throughput format', e)
-				device_properties['READ'] = ''
-				device_properties['WRITE'] = ''
+			read_bps, write_bps = next(tptDict[device_name])
+			# -A drops a device only on throughput read as none: one not read (macOS has none to read) is not idle
+			if active_only and read_bps == 0 and write_bps == 0:
+				continue
+			device_properties['READ'] = '' if read_bps is None else format_rate(read_bps, print_bytes, use_1024)
+			device_properties['WRITE'] = '' if write_bps is None else format_rate(write_bps, print_bytes, use_1024)
 		if device_name in label_dict:
 			device_properties['LABEL'] = label_dict[device_name]
 		if device_name in uuid_dict:
@@ -1425,7 +1385,7 @@ def main():
 	parser.add_argument('-F','-fo','--formated_only', help="Show only formated filesystems", action="store_true")
 	parser.add_argument('-M','-mo','--mounted_only', help="Show only mounted filesystems", action="store_true")
 	parser.add_argument('-B','-bo','--best_only', help="Show only shortest mount point for each device", action="store_true")
-	parser.add_argument('-A','-ao','--active_only', help="Show only active devices (read/write activity since boot on the first query, during the last interval on later watch refreshes; no effect on macOS, which has no throughput to read)", action="store_true")
+	parser.add_argument('-A','-ao','--active_only', help="Show only active devices (read/write activity since boot on the first query, during the last interval on later watch refreshes); a row with no throughput to read stays (every row on macOS, a -P filesystem)", action="store_true")
 	parser.add_argument('-R','--full', help="Show full device information, do not collapse drive info when length > console length", action="store_true")
 	parser.add_argument('-P','--pseudo', help="Include pseudo file systems as well (tmpfs / nfs / cifs etc.)", action="store_true")
 	parser.add_argument('-o','--output', help="Specify which output columns to print.Use comma to separate columns. default: all available", default="all", type=str)
