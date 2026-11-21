@@ -348,6 +348,7 @@ def test_darwin_size_read_as_zero_drops_the_row(monkeypatch, show_zero, listed):
     ((MACOS26_MOUNT, 0), (BEFORE_DISK1, 124), UNMOUNTED),  # diskutil stopped
     ((MACOS26_MOUNT, 0), ([], 127), UNMOUNTED),  # no diskutil answer at all
     ((MACOS26_MOUNT[:2], 124), (MACOS26_DISKUTIL, 0), UNMOUNTED),  # mount stopped
+    ((MACOS26_MOUNT[:2], 1), (MACOS26_DISKUTIL, 0), UNMOUNTED),  # mount failed
 ])
 def test_darwin_formated_only_drops_only_a_type_read_as_blank(monkeypatch, mount, diskutil, kept):
     _darwin_machine(monkeypatch, mount=mount, diskutil=diskutil)
