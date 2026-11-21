@@ -1122,9 +1122,10 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 	size_dict = {}
 	model_dict = {}
 	serial_dict = {}
-	# Whether a blank FSTYPE of an unmounted device was read (its source answered in full: lsblk and diskutil exited 0,
-	# and so did mount), so -F may drop it. On Linux that is one answer for all of lsblk's output, not one per device
-	# it listed: what lsblk leaves out (RAM disks, empty devices, a device that just went away) is not for -F to show.
+	# Whether a blank FSTYPE of an unmounted device was read (its source answered in full: on Linux lsblk exited 0, on
+	# macOS neither diskutil nor mount is in `unanswered`), so -F may drop it. On Linux that is one answer for all of
+	# lsblk's output, not one per device it listed: what lsblk leaves out (RAM disks, empty devices, a device that just
+	# went away) is not for -F to show.
 	fstype_answered = IS_DARWIN and 'diskutil' not in unanswered and 'mount' not in unanswered
 	if (not IS_DARWIN) and LSBLK_FIELDS.intersection(collect_fields):
 		lsblk_result.thread.join(_remaining(deadline))

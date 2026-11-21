@@ -780,7 +780,7 @@ def test_lsblk_that_did_not_answer_is_recorded(monkeypatch, result, output, form
 
 def test_get_blocks_skips_a_sysfs_entry_without_a_device_number(monkeypatch, tmp_path):
     # A hidden NVMe multipath path node (nvme3c3n1) is in /sys/class/block with no `dev` file, no /dev node, and lsblk
-    # never lists it; 1.64's -F listed it with a blank FSTYPE.
+    # never lists it; 1.63 listed it as a row of its own, 1.64 lists it nowhere.
     monkeypatch.setattr(statblk, "IS_DARWIN", False)
     redirect_sys_class_block(tmp_path, monkeypatch)
     for name, has_dev in (("nvme3n1", True), ("nvme3c3n1", False), ("sda", True)):
