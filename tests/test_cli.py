@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -297,3 +298,12 @@ def test_check_help_says_what_a_healthy_json_check_prints():
     ).stdout.split())
     assert "-j: the header row, -J: []" in help_text
     assert "print the rows that need attention, and exit 1 if one has a problem" in help_text
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="diskutil and mount in the sbin directories are macOS's")
+def test_diskutil_and_mount_are_found_under_crons_path():
+    # The lookup is made when the module loads, so it needs a fresh interpreter with cron's PATH.
+    out = subprocess.run([sys.executable, "-c", "import statblk; print(statblk.DISKUTIL_PATH, statblk.MOUNT_PATH)"],
+                         cwd=str(ROOT), env=dict(os.environ, PATH="/usr/bin:/bin"),
+                         stdout=subprocess.PIPE, universal_newlines=True, check=True).stdout.split()
+    assert out == ["/usr/sbin/diskutil", "/sbin/mount"]
