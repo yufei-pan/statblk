@@ -1,4 +1,5 @@
 import errno
+import os
 from collections import defaultdict
 
 import pytest
@@ -20,7 +21,7 @@ def _patch_linux_basics(monkeypatch, devices=None, mounts=None):
     mounts = mounts if mounts is not None else _mount_table()
     monkeypatch.setattr(statblk, "IS_DARWIN", False)
     monkeypatch.setattr(statblk, "get_blocks", lambda: list(devices))
-    monkeypatch.setattr(statblk, "parseMount", lambda timeout=0, cut=None: mounts)
+    monkeypatch.setattr(statblk, "parseMount", lambda timeout=0, unanswered=None: mounts)
     monkeypatch.setattr(statblk, "is_block_device", lambda p: True)
     monkeypatch.setattr(statblk, "get_partition_parent_name", lambda p: "/dev/sda")
     monkeypatch.setattr(
@@ -71,7 +72,7 @@ def test_filter_patterns(monkeypatch):
     _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/nvme0n1"])
     mounts = _mount_table("/dev/sda1", "/")
     mounts["/dev/nvme0n1"] = [statblk.MountEntry("/mnt", "xfs", ["rw"])]
-    monkeypatch.setattr(statblk, "parseMount", lambda timeout=0, cut=None: mounts)
+    monkeypatch.setattr(statblk, "parseMount", lambda timeout=0, unanswered=None: mounts)
     fake = FakeCmdResult([], 0)
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
@@ -85,7 +86,7 @@ def test_invert_match_row_filter(monkeypatch):
     _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/nvme0n1"])
     mounts = _mount_table("/dev/sda1", "/")
     mounts["/dev/nvme0n1"] = [statblk.MountEntry("/mnt", "xfs", ["rw"])]
-    monkeypatch.setattr(statblk, "parseMount", lambda timeout=0, cut=None: mounts)
+    monkeypatch.setattr(statblk, "parseMount", lambda timeout=0, unanswered=None: mounts)
     fake = FakeCmdResult([], 0)
     monkeypatch.setattr(statblk.multiCMD, "run_command", lambda *a, **k: fake)
     monkeypatch.setattr(statblk.multiCMD, "format_bytes", lambda n, **k: str(n))
@@ -631,6 +632,76 @@ def test_formated_only_drops_only_a_type_read_as_blank(monkeypatch, result, kept
     assert [r[0] for r in rows[1:]] == kept
 
 
+def test_formated_only_drops_a_device_lsblk_did_not_list(monkeypatch):
+    # lsblk exited 0 without sda3: -F takes that answer for every device, as 1.63 did. lsblk leaves out RAM disks,
+    # empty devices and a device that just went away, and a rule that kept what it did not list showed those under -F.
+    _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/sda2", "/dev/sda3"], mounts=defaultdict(list))
+    _patch_multicmd(monkeypatch, FakeCmdResult(_FORMATTED_AND_BLANK_LSBLK, 0))
+    rows = statblk.get_drives_info(output="NAME,FSTYPE", formated_only=True, timeout=2)
+    assert rows[1:] == [["sda1", "ext4"]]
+
+
+def test_active_only_keeps_the_pseudo_rows(monkeypatch):
+    # -A filters the devices whose throughput it can read; a -P filesystem (tmpfs, nfs) has none, so it stays, as on
+    # macOS. 1.63 dropped every -P row on Linux.
+    mounts = defaultdict(list, {
+        "/dev/sda1": [statblk.MountEntry("/data", "ext4", ["rw"])],
+        "/dev/sdb1": [statblk.MountEntry("/idle", "ext4", ["rw"])],
+        "tmpfs": [statblk.MountEntry("/tmp", "tmpfs", ["rw"])],
+        "server:/export": [statblk.MountEntry("/mnt/nfs", "nfs4", ["rw"])],
+    })
+    _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/sdb1"], mounts=mounts)
+    monkeypatch.setattr(statblk, "is_block_device", lambda p: p.startswith("/dev/"))
+    monkeypatch.setattr(statblk, "get_read_write_rate_throughput_iter",
+                        lambda p: iter(lambda: (0, 0) if p.endswith("sdb1") else (100, 0), None))
+    _patch_multicmd(monkeypatch, FakeCmdResult([], 0))
+    rows = statblk.get_drives_info(output="NAME,MOUNTPOINT", pseudo=True, active_only=True, timeout=2)
+    assert rows[1:] == [["sda1", "/data"], ["server:/export", "/mnt/nfs"], ["tmpfs", "/tmp"]]
+
+
+@pytest.mark.parametrize("throughput, kept", [((0, 0), False), ((None, None), True), ((0, 5), True)],
+                         ids=["read as idle", "not read", "active"])
+def test_active_only_drops_only_a_device_read_as_idle(monkeypatch, throughput, kept):
+    # A stat that could not be read (the device vanished after the listing) is not idle; 1.63 read it as 0 B/s.
+    _patch_linux_basics(monkeypatch, devices=["/dev/sda1"])
+    monkeypatch.setattr(statblk, "get_read_write_rate_throughput_iter", lambda p: iter(lambda: throughput, None))
+    _patch_multicmd(monkeypatch, FakeCmdResult([], 0))
+    rows = statblk.get_drives_info(output="NAME,READ,WRITE", active_only=True, timeout=2, print_bytes=True)
+    assert rows[1:] == ([["sda1", "" if throughput[0] is None else str(throughput[0]),
+                          "" if throughput[1] is None else str(throughput[1])]] if kept else [])
+
+
+@pytest.mark.parametrize("statvfs, kept", [
+    ("hang", [["sda1", "TIMEOUT", "/mnt/a"]]),
+    ("error", [["sda1", "ERROR", "/mnt/a"]]),
+    ("answers", []),
+])
+def test_active_only_keeps_an_idle_devices_mount_that_failed(monkeypatch, statvfs, kept):
+    # "A hung or failing mount: always show it" held only without -A: watch mode turns -A on after its first refresh,
+    # and an idle device's failed mount row went with the device. Its unmounted sibling sda2 still goes.
+    _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/sda2"], mounts=_mount_table("/dev/sda1", "/mnt/a"))
+    monkeypatch.setattr(statblk, "get_read_write_rate_throughput_iter", lambda p: iter(lambda: (0, 0), None))
+
+    def usage(mountpoint, timeout=None):
+        if statvfs == "error":
+            raise PermissionError(errno.EACCES, "denied")
+        return None if statvfs == "hang" else (1000, 350, 650)
+
+    monkeypatch.setattr(statblk, "get_statvfs_use_size", usage)
+    _patch_multicmd(monkeypatch, FakeCmdResult([], 0))
+    rows = statblk.get_drives_info(output="NAME,FSUSE%,MOUNTPOINT", active_only=True, timeout=2)
+    assert rows[1:] == kept
+
+
+def test_unmounted_device_whose_sysfs_size_cannot_be_read_stays_with_a_blank_size(monkeypatch):
+    # lsblk gave no size (it failed) and sysfs no longer answers: not read is not a size of 0 (1.63 dropped the row).
+    _patch_linux_basics(monkeypatch, devices=["/dev/sda1", "/dev/sdb"], mounts=defaultdict(list))
+    monkeypatch.setattr(statblk, "read_size", lambda p: None if p.endswith("sdb") else 0)
+    _patch_multicmd(monkeypatch, FakeCmdResult([], returncode=1))
+    rows = statblk.get_drives_info(output="NAME,SIZE", timeout=2)
+    assert rows[1:] == [["sdb", ""]]  # sda1's size was read as 0: hidden as before
+
+
 def _hardware_and_virtual(tmp_path, monkeypatch):
     make_sysfs_block(tmp_path, "sda", size_sectors=1)  # physical: has device/
     make_sysfs_block(tmp_path, "loop0", size_sectors=1, with_device=False)
@@ -687,16 +758,36 @@ def test_library_default_timeout_reaches_lsblk_as_no_limit(monkeypatch):
     assert rows[1:] == [["sda1", "SN123"]]
 
 
-@pytest.mark.parametrize("result, output, expected", [
-    (FakeCmdResult([], returncode=124), "NAME,FSTYPE", ["lsblk"]),       # stopped at --timeout
-    (FakeCmdResult([], returncode=None, alive=True), "NAME,SERIAL", ["lsblk"]),  # still running at the deadline
-    (FakeCmdResult([], returncode=124), "NAME,SIZE", []),        # SIZE and LABEL have sources of their own
-    (FakeCmdResult([], returncode=1), "NAME,FSTYPE", []),         # it ended: not the timeout's doing
-    (FakeCmdResult(['NAME="/dev/sda1" FSTYPE="ext4"'], 0), "NAME,FSTYPE", []),
+@pytest.mark.parametrize("result, output, formated_only, unanswered", [
+    (FakeCmdResult([], returncode=124), "NAME,FSTYPE", False, {"lsblk": 124}),  # stopped at --timeout
+    (FakeCmdResult([], returncode=None, alive=True), "NAME,SERIAL", False, {"lsblk": 124}),  # running at the deadline
+    (FakeCmdResult([], returncode=124), "NAME,SIZE", False, {}),  # SIZE and LABEL have sources of their own
+    (FakeCmdResult([], returncode=1), "NAME,FSTYPE", False, {"lsblk": 1}),  # it failed
+    (FakeCmdResult([], returncode=127), "NAME,UUID", False, {"lsblk": 127}),  # not installed
+    (FakeCmdResult([], returncode=127), "NAME,LABEL", False, {}),
+    (FakeCmdResult([], returncode=127), "NAME,SIZE", True, {"lsblk": 127}),  # -F needs FSTYPE without showing it
+    (FakeCmdResult([], returncode=127), "NAME,FSUSE%", False, {}),  # no column needs lsblk: it does not run
+    (FakeCmdResult(['NAME="/dev/sda1" FSTYPE="ext4"'], 0), "NAME,FSTYPE", False, {}),
 ])
-def test_lsblk_cut_by_the_timeout_is_recorded(monkeypatch, result, output, expected):
+def test_lsblk_that_did_not_answer_is_recorded(monkeypatch, result, output, formated_only, unanswered):
     _patch_linux_basics(monkeypatch)
     _patch_multicmd(monkeypatch, result)
-    cut = []
-    statblk.get_drives_info(output=output, timeout=2, cut=cut)
-    assert cut == expected
+    record, cut = {}, []
+    statblk.get_drives_info(output=output, formated_only=formated_only, timeout=2, unanswered=record, cut=cut)
+    assert record == unanswered
+    assert cut == [c for c, rc in unanswered.items() if rc == 124]  # the 1.62 list: only what the timeout stopped
+
+
+def test_get_blocks_skips_a_sysfs_entry_without_a_device_number(monkeypatch, tmp_path):
+    # A hidden NVMe multipath path node (nvme3c3n1) is in /sys/class/block with no `dev` file, no /dev node, and lsblk
+    # never lists it; 1.63 listed it as a row of its own, 1.64 lists it nowhere.
+    monkeypatch.setattr(statblk, "IS_DARWIN", False)
+    redirect_sys_class_block(tmp_path, monkeypatch)
+    for name, has_dev in (("nvme3n1", True), ("nvme3c3n1", False), ("sda", True)):
+        make_sysfs_block(tmp_path, name, size_sectors=8)
+        if has_dev:
+            (tmp_path / "sys" / "class" / "block" / name / "dev").write_text("259:0\n")
+    fake = str(tmp_path / "sys" / "class" / "block")
+    real_listdir = os.listdir
+    monkeypatch.setattr(statblk.os, "listdir", lambda p: real_listdir(fake) if p == "/sys/class/block" else real_listdir(p))
+    assert sorted(statblk.get_blocks()) == ["/dev/nvme3n1", "/dev/sda"]

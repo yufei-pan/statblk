@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import statblk
 from fakes import make_sysfs_block
 
@@ -52,8 +54,34 @@ def test_short_stat_poll_yields_once_then_continues(tmp_path, monkeypatch):
     first = next(it)
     assert first[0] > 0
     second = next(it)
-    assert second == (0, 0)
+    assert second == (None, None)  # not read: not idle
     # Third next should again be a single short-line yield, not a double IndexError path
     third = next(it)
-    assert third == (0, 0)
+    assert third == (None, None)
     assert reads["n"] == 3
+
+
+def test_unreadable_stat_is_not_read_not_idle(tmp_path, monkeypatch):
+    # A stat that cannot be read (the device vanished after the listing) gives no throughput: (None, None), which -A
+    # does not take for an idle device. 1.63 yielded (0, 0).
+    block = make_sysfs_block(tmp_path, "sda", size_sectors=10)  # no stat file
+    monkeypatch.setattr(statblk, "IS_DARWIN", False)
+    it = statblk.get_read_write_rate_throughput_iter(str(block))
+    assert next(it) == (None, None) and next(it) == (None, None)
+    assert next(statblk.get_read_write_rate_throughput_iter(str(tmp_path / "gone"))) == (None, None)
+
+
+def test_rate_after_a_sample_that_was_not_read_counts_from_the_last_one_read(tmp_path, monkeypatch):
+    # The first sample read is the since-boot average, whatever came before it; later ones count from the last sample
+    # read, not from zero (1.63 read the bytes since boot over one interval after a first read that failed).
+    block = make_sysfs_block(tmp_path, "sda", size_sectors=10)
+    stat = block / "stat"
+    clock = iter([100.0, 102.0])
+    monkeypatch.setattr(statblk, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+    monkeypatch.setattr(statblk, "IS_DARWIN", False)
+    it = statblk.get_read_write_rate_throughput_iter(str(block))
+    assert next(it) == (None, None)
+    stat.write_text("0 0 2000 1000 0 0 4000 2000 0 0 0\n")  # 1 MiB read in 1 s busy, 2 MiB written in 2 s
+    assert next(it) == (2000 * 512, 4000 * 512 // 2)
+    stat.write_text("0 0 6000 1000 0 0 4000 2000 0 0 0\n")  # 2 s later: 4000 sectors more read
+    assert next(it) == (4000 * 512 // 2, 0)

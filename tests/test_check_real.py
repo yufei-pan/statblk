@@ -10,13 +10,16 @@ import statblk
 from fakes import MACOS26_DEV, MACOS26_DISKUTIL, MACOS26_MOUNT, FakeCmdResult
 
 CUT = 124  # multiCMD's return code for a command --timeout stopped
+NOT_FOUND = 127  # and for one it did not find
+FAILED = 1
+DID_NOT_ANSWER = pytest.mark.parametrize("returncode", [CUT, NOT_FOUND, FAILED], ids=["stopped", "not found", "failed"])
 EIO = OSError(errno.EIO, "Input/output error")  # statvfs of a failing disk's mount, a dead FUSE or NFS mount
 DENIED = PermissionError(errno.EACCES, "Permission denied")  # statvfs under a directory the user cannot search
 STATVFS_ERRORS = pytest.mark.parametrize("error", [EIO, DENIED], ids=["EIO", "PermissionError"])
 
 
-def _cut_line(command, timeout):
-    return statblk.cut_note(command, timeout) + "\n"
+def _cut_line(command, timeout, returncode=CUT):
+    return statblk.cut_note(command, timeout, returncode) + "\n"
 
 
 def _run_tables(monkeypatch, capsys, argv, run_command, usage=(1000, 350, 650)):
@@ -79,6 +82,7 @@ def _mac(monkeypatch, failing, diskutil=(MACOS26_DISKUTIL, 0), mount=(MACOS26_MO
     for `unreadable`. The function's .given lists the commands it was given."""
     monkeypatch.setattr(statblk, "IS_DARWIN", True)
     monkeypatch.setattr(statblk, "DISKUTIL_PATH", "/usr/sbin/diskutil")
+    monkeypatch.setattr(statblk, "MOUNT_PATH", "/sbin/mount")
     monkeypatch.setattr(statblk, "get_blocks", lambda: list(dev))
     monkeypatch.setattr(statblk, "is_block_device", lambda p: p in dev)
     given = []
@@ -87,7 +91,7 @@ def _mac(monkeypatch, failing, diskutil=(MACOS26_DISKUTIL, 0), mount=(MACOS26_MO
         given.append(command)
         if "smartctl" in command:
             return _smartctl(command, failing, unreadable)
-        if command == "mount":
+        if command == "/sbin/mount":
             return FakeCmdResult(*mount)
         assert "diskutil" in command, command
         return FakeCmdResult(*diskutil)
@@ -153,6 +157,18 @@ def test_mac_mount_stopped_hides_a_full_filesystem_as_unknown_not_healthy(monkey
     assert _run(monkeypatch, capsys, ["--check", "-t", "2"], run, usage=full) == (1, MOUNTED, "T\n", "")
     run = _mac(monkeypatch, "/dev/none", mount=([], CUT))
     assert _run(monkeypatch, capsys, ["--check", "-t", "2"], run, usage=full) == (3, [], "", _cut_line("mount", 2))
+
+
+@DID_NOT_ANSWER
+def test_mac_mount_that_did_not_answer_is_unknown_not_healthy(monkeypatch, capsys, returncode):
+    # 1.63 counted only a mount the timeout stopped: one that failed or was not found (cron's PATH has no /sbin; see
+    # find_command) left the mounts unknown and exited 0, and with -M over a failing disk. (No mount rows, so no
+    # statvfs: the stopped case above is the one over a full filesystem.)
+    run = _mac(monkeypatch, "/dev/none", mount=([], returncode))
+    note = _cut_line("mount", 2, returncode)
+    assert _run(monkeypatch, capsys, ["--check", "-t", "2"], run) == (3, [], "", note)
+    run = _mac(monkeypatch, "/dev/disk3", mount=([], returncode))
+    assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-M"], run) == (3, [], "", note)
 
 
 @pytest.mark.parametrize("argv", [["disk3"], ["-v", "zzz"]], ids=["pattern", "inverted pattern"])
@@ -232,8 +248,10 @@ DISK4 = ["", "   Device Identifier:         disk4", "   Device Node:            
          "   Device Identifier:         disk4s1", "   Device Node:               /dev/disk4s1"]
 
 
-@pytest.mark.parametrize("returncode, expected", [(0, (0, [], "", "")), (1, (1, ["disk4", "disk4s1"], "T\n", ""))],
-                         ids=["exit 0", "exit 1"])
+@pytest.mark.parametrize("returncode, expected", [
+    (0, (0, [], "", "")),
+    (1, (1, ["disk4", "disk4s1"], "T\n", _cut_line("diskutil", 2, FAILED))),  # a run that is not healthy names it
+], ids=["exit 0", "exit 1"])
 def test_mac_formated_only_diskutil_exit_decides_whether_the_type_was_read(monkeypatch, capsys, returncode, expected):
     # Only a diskutil that exited 0 answered in full: then disk4s1's blank type was read (no filesystem), and -F drops
     # it with disk4; after an error exit it was not read, so both stay and disk4's SMART is judged.
@@ -303,7 +321,6 @@ def _linux(monkeypatch, tmp_path, failing, lsblk=(LSBLK, 0), sdb1_mounted=False)
     monkeypatch.setattr(statblk, "read_discard_support", lambda p: "N/A")
     monkeypatch.setattr(statblk, "build_symlink_dict", lambda d: {})
     monkeypatch.setattr(statblk, "get_read_write_rate_throughput_iter", lambda p: iter(lambda: (0, 0), None))
-    monkeypatch.setattr(statblk.shutil, "which", lambda name, *a, **k: None if lsblk[1] == 127 else "/usr/bin/" + name)
 
     def run_command(command, *a, **k):
         if "smartctl" in command:
@@ -324,7 +341,14 @@ def test_linux_formated_only_lsblk_stopped_still_shows_the_failing_disk(monkeypa
 def test_linux_formated_only_without_lsblk_still_shows_the_failing_disk(monkeypatch, capsys, tmp_path):
     run = _linux(monkeypatch, tmp_path, "/dev/sdb", lsblk=([], 127))
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-F"], run) == (
-        1, ["sdb", "sdb1"], "T\n", statblk.LSBLK_MISSING_NOTE + "\n")
+        1, ["sdb", "sdb1"], "T\n", _cut_line("lsblk", 0.5, NOT_FOUND))
+
+
+def test_linux_formated_only_without_lsblk_says_why_it_filters_nothing(monkeypatch, capsys, tmp_path):
+    # -F needs FSTYPE without showing it: 1.63 kept every unmounted device (its type was not read) and said nothing.
+    run = _linux(monkeypatch, tmp_path, "/dev/none", lsblk=([], NOT_FOUND))
+    assert _run(monkeypatch, capsys, ["-F", "-o", "NAME,SIZE", "-t", "0.5"], run) == (
+        0, ["sda", "sda1", "sdb", "sdb1"], "T\n", _cut_line("lsblk", 0.5, NOT_FOUND))
 
 
 @pytest.mark.parametrize("stop", LSBLK_STOPPED)
@@ -368,6 +392,18 @@ def test_linux_lsblk_stopped_with_a_pattern_and_a_failing_disk_is_a_problem(monk
         1, ["sdb", "sdb1"], "T\n", _cut_line("lsblk", 0.5))
 
 
+@DID_NOT_ANSWER
+def test_linux_lsblk_that_did_not_answer_with_a_pattern_only_it_could_match_is_unknown(monkeypatch, capsys, tmp_path,
+                                                                                      returncode):
+    # sdb fails, and only lsblk's FSTYPE of the unmounted sdb1 matches "ext4" for it (sda1's matches through the mount
+    # table). 1.63 exited 0 here for a missing or failing lsblk, and 3 for a stopped one.
+    run = _linux(monkeypatch, tmp_path, "/dev/sdb", lsblk=([], returncode))
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "ext4"], run) == (
+        3, [], "", _cut_line("lsblk", 0.5, returncode))
+    run = _linux(monkeypatch, tmp_path, "/dev/sdb")  # the control: lsblk answered
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "ext4"], run) == (1, ["sdb1"], "T\n", "")
+
+
 @pytest.mark.parametrize("argv, expected", [([], (0, [], "", "")), (["--show_zero_size_devices"], (1, ["sdb", "sdb1"], "T\n", ""))],
                          ids=["hidden", "shown"])
 def test_linux_disk_whose_size_reads_zero_is_checked_only_when_shown(monkeypatch, capsys, tmp_path, argv, expected):
@@ -382,6 +418,26 @@ def test_linux_zero_size_whole_disk_is_judged_through_its_partition(monkeypatch,
     lsblk = [line.replace('SIZE="1073741824"', 'SIZE="0"') if 'NAME="/dev/sdb"' in line else line for line in LSBLK]
     run = _linux(monkeypatch, tmp_path, "/dev/sdb", lsblk=(lsblk, 0))
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"], run) == (1, ["sdb1"], "T\n", "")
+
+
+@pytest.mark.parametrize("lsblk", [([], NOT_FOUND), ([], CUT)], ids=["no lsblk", "lsblk stopped"])
+def test_linux_failing_disk_whose_sysfs_size_cannot_be_read_is_judged(monkeypatch, capsys, tmp_path, lsblk):
+    # With no size from lsblk, sdb's and sdb1's come from sysfs, which no longer answers (the disk is going away): not
+    # read is not a size of 0, so the rows stay, SIZE blank, and sdb's SMART is judged (1.63 dropped them, exit 0).
+    run = _linux(monkeypatch, tmp_path, "/dev/sdb", lsblk=lsblk)
+    monkeypatch.setattr(statblk, "read_size", lambda p: None if "sdb" in p else 1 << 30)
+    code, tables, out, err = _run_tables(monkeypatch, capsys, ["--check", "-t", "0.5", "-o", "NAME,SIZE"], run)
+    assert (code, out) == (1, "T\n")
+    size = tables[0][0].index("SIZE")
+    assert [(row[0], row[size]) for row in tables[0][1:]] == [("sdb", ""), ("sdb1", "")]
+
+
+def test_linux_active_only_judges_a_failing_disk_whose_stat_cannot_be_read(monkeypatch, capsys, tmp_path):
+    # -A drops a device read as idle; sdb's stat no longer answers, which is not idle (1.63 read it as 0 B/s, exit 0).
+    run = _linux(monkeypatch, tmp_path, "/dev/sdb")
+    monkeypatch.setattr(statblk, "get_read_write_rate_throughput_iter",
+                        lambda p: iter(lambda: (None, None) if "sdb" in p else (0, 0), None))
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-A"], run) == (1, ["sdb", "sdb1"], "T\n", "")
 
 
 @STATVFS_ERRORS
@@ -402,6 +458,25 @@ def test_linux_statvfs_error_still_shows_the_failing_disk(monkeypatch, capsys, t
     run = _linux(monkeypatch, tmp_path, "/dev/sdb", sdb1_mounted=True)
     names = ["sda1", "sdb", "sdb1"] if not argv else ["sda1", "sdb1"]
     assert _run(monkeypatch, capsys, ["--check", "-t", "2"] + argv, run, usage=error) == (1, names, "T\n", "")
+
+
+@pytest.mark.parametrize("usage, cell", [(DENIED, "ERROR"), (None, "TIMEOUT")], ids=["error", "hang"])
+def test_linux_watch_keeps_an_idle_devices_failed_mount_after_the_first_refresh(monkeypatch, capsys, tmp_path, usage,
+                                                                                 cell):
+    # Watch mode turns -A on after its first refresh, and every device here reads as idle: sda1's mount row, whose
+    # statvfs fails or hangs, stays in the second table (1.63 showed it once).
+    run = _linux(monkeypatch, tmp_path, "/dev/none")
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            raise KeyboardInterrupt()
+
+    monkeypatch.setattr(statblk.time, "sleep", sleep)
+    code, tables, out, err = _run_tables(monkeypatch, capsys, ["-w", "1", "-t", "2", "-o", "NAME,FSUSE%"], run, usage)
+    assert code == 130 and len(tables) == 2
+    assert ["sda1", cell] in tables[0] and tables[1][1:] == [["sda1", cell]]
 
 
 # The cut rule, one case per cell, through the real get_drives_info: a healthy host whose command --timeout stopped
@@ -429,16 +504,19 @@ for _command in ("mount", "diskutil", "lsblk"):
     _CUT_COUNTS[(_command, "both")] = _CUT_COUNTS[(_command, "FSUSE%")] | _CUT_COUNTS[(_command, "SMART")]
 
 
+@DID_NOT_ANSWER
 @pytest.mark.parametrize("flags", CUT_FLAGS)
 @pytest.mark.parametrize("columns", CUT_COLUMNS)
 @pytest.mark.parametrize("command", ["mount", "diskutil", "lsblk"])
-def test_check_cut_rule_cell(monkeypatch, capsys, tmp_path, command, columns, flags):
+def test_check_cut_rule_cell(monkeypatch, capsys, tmp_path, command, columns, flags, returncode):
+    # One rule however the command did not answer: stopped by --timeout, not found or failed (1.63 counted only a stop).
     if command == "lsblk":
-        run = _linux(monkeypatch, tmp_path, "/dev/none", lsblk=([], CUT))
+        run = _linux(monkeypatch, tmp_path, "/dev/none", lsblk=([], returncode))
     elif command == "mount":
-        run = _mac(monkeypatch, "/dev/none", mount=([], CUT))
+        run = _mac(monkeypatch, "/dev/none", mount=([], returncode))
     else:
-        run = _mac(monkeypatch, "/dev/none", diskutil=([], CUT))
+        run = _mac(monkeypatch, "/dev/none", diskutil=([], returncode))
     argv = ["--check", "-t", "0.5"] + CUT_COLUMNS[columns] + CUT_FLAGS[flags]
-    expected = (3, [], "", _cut_line(command, 0.5)) if flags in _CUT_COUNTS[(command, columns)] else (0, [], "", "")
+    expected = ((3, [], "", _cut_line(command, 0.5, returncode)) if flags in _CUT_COUNTS[(command, columns)]
+                else (0, [], "", ""))
     assert _run(monkeypatch, capsys, argv, run) == expected

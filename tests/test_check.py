@@ -189,7 +189,7 @@ def _run_main_cut(monkeypatch, argv, rows, cut):
     tables = []
 
     def gdi(**k):
-        k["cut"].extend(cut)
+        k["unanswered"].update(dict.fromkeys(cut, statblk.TIMEOUT_RETURNCODE))
         return [list(r) for r in rows]
 
     monkeypatch.setattr(statblk, "get_drives_info", gdi)

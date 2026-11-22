@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -287,3 +288,22 @@ def test_help_and_readme_say_timeout_zero_means_no_limit():
     timeout_row = next(line for line in (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
                        if line.startswith("| `-t`, `--timeout`"))
     assert "0: no limit" in timeout_row
+
+
+def test_check_help_says_what_a_healthy_json_check_prints():
+    # A healthy --check prints the header row with -j and [] with -J (test_check.py, test_check_json_when_healthy).
+    help_text = " ".join(subprocess.run(
+        [sys.executable, str(ROOT / "statblk.py"), "--help"],
+        stdout=subprocess.PIPE, universal_newlines=True, check=True,
+    ).stdout.split())
+    assert "-j: the header row, -J: []" in help_text
+    assert "print the rows that need attention, and exit 1 if one has a problem" in help_text
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="diskutil and mount in the sbin directories are macOS's")
+def test_diskutil_and_mount_are_found_under_crons_path():
+    # The lookup is made when the module loads, so it needs a fresh interpreter with cron's PATH.
+    out = subprocess.run([sys.executable, "-c", "import statblk; print(statblk.DISKUTIL_PATH, statblk.MOUNT_PATH)"],
+                         cwd=str(ROOT), env=dict(os.environ, PATH="/usr/bin:/bin"),
+                         stdout=subprocess.PIPE, universal_newlines=True, check=True).stdout.split()
+    assert out == ["/usr/sbin/diskutil", "/sbin/mount"]
