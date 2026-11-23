@@ -618,7 +618,7 @@ def _sysfs_block(monkeypatch, listing):
                          ids=["empty", "missing", "not readable"])
 def test_linux_check_on_a_host_that_lists_no_block_device_could_not_tell(monkeypatch, capsys, tmp_path, listing):
     # No /sys/class/block (a container with no sysfs, a chroot) or one that lists nothing: no row, so nothing was
-    # checked. 1.64 and the 1.65 build exited 0 (the deferral of 1.66, settled by the table rule).
+    # checked. 1.64 and the 1.65 build exited 0; the table rule settles it.
     run = _linux(monkeypatch, tmp_path, "/dev/sdb")
     _sysfs_block(monkeypatch, listing)
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"], run) == (3, [], "", NOTHING_DEVICES)

@@ -301,8 +301,8 @@ def test_check_help_says_what_a_healthy_json_check_prints():
 
 
 def test_help_says_when_check_judges_nothing_and_what_starts_a_rate_over():
-    help_text = " ".join(subprocess.run(
-        [sys.executable, str(ROOT / "statblk.py"), "--help"],
+    help_text = " ".join(subprocess.run(  # one line per option: no wrap inside "since-boot"
+        [sys.executable, str(ROOT / "statblk.py"), "--help"], env=dict(os.environ, COLUMNS="10000"),
         stdout=subprocess.PIPE, universal_newlines=True, check=True,
     ).stdout.split())
     assert "or the filters leave no row, or no block device is listed: said on stderr" in help_text
