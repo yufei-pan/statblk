@@ -524,11 +524,12 @@ def test_check_cut_rule_cell(monkeypatch, capsys, tmp_path, command, columns, fl
 
 
 # A --check that can judge nothing: no checked column (-x leaves out both FSUSE% and SMART, which is also the only way
-# to leave no valid output field), or -v with no pattern, which keeps no row. 1.64 printed nothing and exited 0, over a
-# failing disk too; it could not tell, so 3, with why on stderr.
+# to leave no valid output field), or -v with no pattern or one that matches every cell (an empty "$SKIP", .*), which
+# keeps no row. 1.64 printed nothing and exited 0, over a failing disk too; it could not tell, so 3, with why on stderr.
 
 NOTHING_X = "Nothing was checked: -x leaves out both FSUSE% and SMART; leave one in.\n"
-NOTHING_V = "Nothing was checked: -v with no pattern keeps no row; give -v the pattern to leave out.\n"
+NOTHING_V = ('Nothing was checked: -v with no pattern, or one that matches every cell (an empty "$SKIP", .*), keeps no '
+             'row; give -v the pattern to leave out.\n')
 NO_VALID_FIELD = "Ignoring invalid output field: FOO.\nNo valid output fields specified.\n"
 
 
@@ -536,11 +537,16 @@ NO_VALID_FIELD = "Ignoring invalid output field: FOO.\nNo valid output fields sp
     (["-v"], NOTHING_V),
     (["-D", "-v"], NOTHING_V),
     (["-v", "0"], NOTHING_V),  # a trailing 0 is neither a pattern nor a watch
+    (["-v", ""], NOTHING_V),  # an empty pattern, as `-v "$SKIP"` gives when SKIP is empty: matches every cell
+    (["-v", ".*"], NOTHING_V),  # so does any pattern that matches everything
+    (["-v", "sdb", ""], NOTHING_V),  # one empty pattern among others: the alternation matches everything
+    (["-D", "-v", ""], NOTHING_V),  # -D matches device names: the same
     (["-x", "FSUSE%,SMART"], NOTHING_X),
     (["-x", "smart, fsuse%", "-o", "NAME,SIZE"], NOTHING_X),
     (["-x", "FSUSE%,SMART", "-o", "foo"], NO_VALID_FIELD + NOTHING_X),
     (["-v", "-x", "FSUSE%,SMART"], NOTHING_X + NOTHING_V),
-], ids=["-v", "-D -v", "-v 0", "-x both", "-x both -o", "no valid field", "both reasons"])
+], ids=["-v", "-D -v", "-v 0", "-v empty", "-v .*", "-v pattern and empty", "-D -v empty", "-x both", "-x both -o",
+        "no valid field", "both reasons"])
 def test_linux_check_that_can_judge_nothing_could_not_tell(monkeypatch, capsys, tmp_path, argv, err):
     run = _linux(monkeypatch, tmp_path, "/dev/sdb")  # sdb fails its SMART
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run) == (3, [], "", err)
@@ -548,9 +554,10 @@ def test_linux_check_that_can_judge_nothing_could_not_tell(monkeypatch, capsys, 
 
 @pytest.mark.parametrize("argv, expected", [
     (["-v", "sdb"], (0, [], "", "")),  # the operator's own pattern leaves the failing disk out
+    (["-v", "^$"], (0, [], "", "")),  # matches an empty cell only, not every cell: the operator's own
     (["-x", "SMART"], (0, [], "", "")),
     (["-x", "FSUSE%"], (1, ["sdb", "sdb1"], "T\n", "")),
-], ids=["-v pattern", "-x SMART", "-x FSUSE%"])
+], ids=["-v pattern", "-v ^$", "-x SMART", "-x FSUSE%"])
 def test_linux_check_that_judges_something_is_as_before(monkeypatch, capsys, tmp_path, argv, expected):
     run = _linux(monkeypatch, tmp_path, "/dev/sdb")
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run) == expected

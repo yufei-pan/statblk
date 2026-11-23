@@ -1371,19 +1371,28 @@ def check_rows(rows, max_use):
 
 def nothing_to_check(header, invert_match, filter_patterns):
 	"""Why --check can judge nothing in a run whose table has this header: no checked column (-x leaves out both,
-	which is also the only way to have no valid output field), or -v with no pattern, which keeps no row. Each reason
-	makes a healthy-looking run "could not tell" (3): a check of nothing is not a healthy one.
+	which is also the only way to have no valid output field), or -v with no pattern or one that matches every cell
+	(an empty "$SKIP", .*, ^, x*), which keeps no row. Each reason makes a healthy-looking run "could not tell" (3): a
+	check of nothing is not a healthy one. A pattern that matches an empty cell only (^$) is the operator's own.
 
-	>>> nothing_to_check(['NAME', 'SMART'], False, []), nothing_to_check(['NAME', 'FSUSE%'], True, ['sda'])
+	>>> nothing_to_check(['NAME', 'SMART'], False, []), nothing_to_check(['NAME', 'FSUSE%'], True, ['sda', '^$'])
 	([], [])
-	>>> nothing_to_check(['NAME', 'MOUNTPOINT'], True, [])
-	['-x leaves out both FSUSE% and SMART; leave one in', '-v with no pattern keeps no row; give -v the pattern to leave out']
+	>>> [len(nothing_to_check(['NAME', 'SMART'], True, patterns)) for patterns in ([], [''], ['sda', ''], ['.*'])]
+	[1, 1, 1, 1]
+	>>> nothing_to_check(['NAME', 'MOUNTPOINT'], True, [])[0]
+	'-x leaves out both FSUSE% and SMART; leave one in'
 	"""
 	reasons = []
 	if not set(CHECK_FIELDS).intersection(header):
 		reasons.append("-x leaves out both FSUSE% and SMART; leave one in")
-	if invert_match and not filter_patterns:
-		reasons.append("-v with no pattern keeps no row; give -v the pattern to leave out")
+	if invert_match:
+		# Patterns are joined with | and searched in each cell (filter_rows): none joins to '', and an empty one makes
+		# the whole alternation match everywhere. One that matches both '' and 'a' is taken to match any cell; ^$ matches
+		# '' only, and rows without an empty cell stay.
+		pattern = compile_filter_pattern(filter_patterns or [])
+		if pattern.search('') and pattern.search('a'):
+			reasons.append('-v with no pattern, or one that matches every cell (an empty "$SKIP", .*), keeps no row; '
+						   'give -v the pattern to leave out')
 	return reasons
 
 def cut_note(command, timeout, returncode=TIMEOUT_RETURNCODE):
@@ -1444,7 +1453,7 @@ def main():
 	parser.add_argument('-t','--timeout', help="Set command timeout in seconds (default: 2; 0: no limit)", default=2, type=float)
 	parser.add_argument('-w','--watch', metavar='SECONDS', type=float, default=None,
 						help="Repeat output every SECONDS (watch mode). Equivalent to a trailing integer positional.")
-	parser.add_argument('--check', help="Health check: print the rows that need attention, and exit 1 if one has a problem (SMART failing, FSUSE%% >= --max_use, hung mount), else 3 if one could not be checked (SMART unreadable, FSUSE%% ERROR), if nothing could be (-x leaves out FSUSE%% and SMART, or -v has no pattern: said on stderr), or if a command that can hide what is checked did not answer in full (named on stderr); when all is healthy, print nothing (-j: the header row, -J: []) and exit 0", action="store_true")
+	parser.add_argument('--check', help="Health check: print the rows that need attention, and exit 1 if one has a problem (SMART failing, FSUSE%% >= --max_use, hung mount), else 3 if one could not be checked (SMART unreadable, FSUSE%% ERROR), if nothing could be (-x leaves out FSUSE%% and SMART, or -v has no pattern or one that matches every cell: said on stderr), or if a command that can hide what is checked did not answer in full (named on stderr); when all is healthy, print nothing (-j: the header row, -J: []) and exit 0", action="store_true")
 	parser.add_argument('--max_use', metavar='PCT', type=int, default=90, help="FSUSE%% at or above which --check reports a filesystem (default: 90)")
 	parser.add_argument('--sudo', help="Run commands as root with sudo. Needed for querying SMART info.", action="store_true")
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")
