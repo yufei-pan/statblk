@@ -682,8 +682,8 @@ def test_linux_check_of_a_mounted_virtual_device_judges_its_use(monkeypatch, cap
     ("/dev/none", ["-x", "FSUSE%"], (0, [], "", "")),
     ("/dev/none", ["-x", "SMART"], (3, [], "", _no_value("FSUSE%"))),  # nothing mounted: no FSUSE% anywhere
     ("/dev/sdb", ["-D", "-v", "^sd"], (3, [], "", _no_value())),  # the pattern leaves only the virtual devices
-    ("/dev/sdb", ["-D", "-v", "^sda|^loop|^zram|^vg"], (1, ["sdb", "sdb1"], "T\n", "")),
-], ids=["healthy", "failing disk", "-x FSUSE%", "-x SMART", "-D -v ^sd", "-D -v all but sdb"])
+    ("/dev/sda", ["-D", "-v", "^sda|^loop|^zram|^vg"], (0, [], "", "")),  # the failing sda is left out by its name (1.65 kept it: exit 1)
+], ids=["healthy", "failing disk", "-x FSUSE%", "-x SMART", "-D -v ^sd", "-D -v sda"])
 def test_linux_check_of_disks_beside_virtual_devices(monkeypatch, capsys, tmp_path, failing, argv, expected):
     run = _virtual(monkeypatch, tmp_path, failing, disks=True)
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run) == expected
@@ -699,10 +699,10 @@ def test_linux_check_of_a_disk_in_standby_judged_it(monkeypatch, capsys, tmp_pat
 def test_mac_check_of_rows_with_no_value_could_not_tell(monkeypatch, capsys):
     # -x SMART leaves FSUSE% alone to judge, and disk0 (the SSD) and its slices are not mounted (1.65: exit 0).
     run = _mac(monkeypatch, "/dev/disk0")
-    assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-x", "SMART", "-D", "^disk0"], run) == (
+    assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-x", "SMART", "-D", "^/dev/disk0"], run) == (
         3, [], "", _no_value("FSUSE%"))
     # the control: disk3's volumes are mounted, so their FSUSE% is judged
-    assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-x", "SMART", "-D", "^disk3"], run) == (0, [], "", "")
+    assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-x", "SMART", "-D", "^/dev/disk3"], run) == (0, [], "", "")
 
 
 def _sysfs_block(monkeypatch, listing):

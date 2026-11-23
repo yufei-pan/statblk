@@ -778,7 +778,8 @@ def display_device_name(device_path, full):
 
 def device_names(device):
 	"""The names -D matches a pattern against: the device path, the /dev/mapper/ path of a device-mapper device, and
-	each as NAME shows it without -R (the kernel name sda1, the mapper name pve-root). 1.65 matched only the paths.
+	each without its /dev(/mapper)/ prefix (the kernel name sda1 or dm-0, and the mapper name pve-root, which NAME
+	shows). 1.65 matched only the paths.
 
 	>>> device_names('/dev/sda1')
 	['/dev/sda1', 'sda1']
@@ -1484,7 +1485,7 @@ def main():
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")
 	parser.add_argument('--show_squashfs', help="Show squashfs images on loop devices (snaps, AppImages), hidden by default", action="store_true")
 	parser.add_argument('--show_empty_columns', help="Keep table columns that are empty for every row (hidden by default unless named in -o)", action="store_true")
-	parser.add_argument('-D','--match_devname_only', help="Match the patterns against the device's names only, not the other cells: its path and the name NAME shows (/dev/sda1 and sda1; /dev/dm-0, dm-0, /dev/mapper/pve-root and pve-root)", action="store_true")
+	parser.add_argument('-D','--match_devname_only', help="Match the patterns against the device's names only, not the other cells: its path, its kernel name and the name NAME shows (/dev/sda1 and sda1; /dev/dm-0, dm-0, /dev/mapper/pve-root and pve-root)", action="store_true")
 	parser.add_argument('-v','--invert_match', help="Invert the filter match", action="store_true")
 	parser.add_argument('--debug', help="Print suppressed exceptions to stderr for troubleshooting", action="store_true")
 	parser.add_argument('filter_patterns', nargs='*', help="Filter pattern(s) to match (e.g., sda, nvme0n1p1, btrfs). A trailing integer is treated as --watch SECONDS; append 0 to filter a number without watching.")

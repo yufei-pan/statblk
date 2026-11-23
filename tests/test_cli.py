@@ -308,7 +308,7 @@ def test_help_says_when_check_judges_nothing_and_what_starts_a_rate_over():
     assert ("or the filters leave no row, or no block device is listed, or no row holds a value in FSUSE% or SMART: "
             "said on stderr") in help_text
     # -D: the path and the name NAME shows (1.65 said "device names" and matched only the path)
-    assert "its path and the name NAME shows (/dev/sda1 and sda1;" in help_text
+    assert "its path, its kernel name and the name NAME shows (/dev/sda1 and sda1;" in help_text
     # a device the table drops keeps its counter; only one /sys/class/block stops listing starts over (the epilog, and -A)
     assert help_text.count("a device that /sys/class/block stops listing for one refresh starts over with its "
                            "since-boot average when it returns") == 2
