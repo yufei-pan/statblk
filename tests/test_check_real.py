@@ -4,12 +4,14 @@ Each case forces one outcome: what a stopped command, a failed statvfs, a filter
 exit and the rows."""
 import errno
 import json
+import os
 
 import pytest
 
 import statblk
 from fakes import MACOS26_DEV, MACOS26_DISKUTIL, MACOS26_MOUNT, FakeCmdResult
 
+REAL_GET_BLOCKS = statblk.get_blocks  # the tests below replace it
 CUT = 124  # multiCMD's return code for a command --timeout stopped
 NOT_FOUND = 127  # and for one it did not find
 FAILED = 1
@@ -21,6 +23,11 @@ STATVFS_ERRORS = pytest.mark.parametrize("error", [EIO, DENIED], ids=["EIO", "Pe
 
 def _cut_line(command, timeout, returncode=CUT):
     return statblk.cut_note(command, timeout, returncode) + "\n"
+
+
+def _no_row(filters):
+    """--check's line when the filters leave the table no data row."""
+    return f"Nothing was checked: no row is left to judge after the filters ({filters}).\n"
 
 
 def _run_tables(monkeypatch, capsys, argv, run_command, usage=(1000, 350, 650)):
@@ -131,14 +138,14 @@ def test_mac_healthy_is_silent(monkeypatch, capsys):
     assert _run(monkeypatch, capsys, ["--check", "-t", "2"], run) == (0, [], "", "")
 
 
-@pytest.mark.parametrize("argv, expected", [
-    ([], 3),  # the filesystems it did not list have no FSUSE%
-    (["-x", "FSUSE%"], 0),  # SMART only: every disk is still listed, and none is checked less
-    (["-M", "-x", "FSUSE%"], 3),  # -M: which disks are mounted is not known
+@pytest.mark.parametrize("argv, expected, err", [
+    ([], 3, _cut_line("mount", 2)),  # the filesystems it did not list have no FSUSE%
+    (["-x", "FSUSE%"], 0, ""),  # SMART only: every disk is still listed, and none is checked less
+    (["-M", "-x", "FSUSE%"], 3, "no row"),  # -M: which disks are mounted is not known, and none is left to judge
 ], ids=["plain", "SMART only", "-M"])
-def test_mac_mount_stopped_on_a_healthy_mac(monkeypatch, capsys, argv, expected):
+def test_mac_mount_stopped_on_a_healthy_mac(monkeypatch, capsys, argv, expected, err):
     run = _mac(monkeypatch, "/dev/none", mount=([], CUT))
-    err = _cut_line("mount", 2) if expected else ""
+    err = _no_row("-M") + _cut_line("mount", 2) if err == "no row" else err
     assert _run(monkeypatch, capsys, ["--check", "-t", "2"] + argv, run) == (expected, [], "", err)
 
 
@@ -169,7 +176,7 @@ def test_mac_mount_that_did_not_answer_is_unknown_not_healthy(monkeypatch, capsy
     note = _cut_line("mount", 2, returncode)
     assert _run(monkeypatch, capsys, ["--check", "-t", "2"], run) == (3, [], "", note)
     run = _mac(monkeypatch, "/dev/disk3", mount=([], returncode))
-    assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-M"], run) == (3, [], "", note)
+    assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-M"], run) == (3, [], "", _no_row("-M") + note)
 
 
 @pytest.mark.parametrize("argv", [["disk3"], ["-v", "zzz"]], ids=["pattern", "inverted pattern"])
@@ -485,10 +492,13 @@ def test_linux_watch_keeps_an_idle_devices_failed_mount_after_the_first_refresh(
 # column's input: macOS's mount lists the mounted filesystems (their FSUSE%, and with -M the rows that carry the SMART),
 # and a pattern that is not -D matches any cell a command fills. Everything else is shown blank and judged as before.
 
+CUT_PATTERN = "sd|disk"  # matches a row of the Linux fixture (sda) and of the Mac's capture (disk0), so a pattern keeps rows
 CUT_FLAGS = {
     "plain": [], "-M": ["-M"], "-F": ["-F"], "-F -M": ["-F", "-M"],
-    "pattern": ["sda"], "-D pattern": ["-D", "sda"], "-M pattern": ["-M", "sda"],
+    "pattern": [CUT_PATTERN], "-D pattern": ["-D", CUT_PATTERN], "-M pattern": ["-M", CUT_PATTERN],
 }
+# what a stopped macOS mount leaves no row of: -M drops every device when nothing is listed as mounted
+CUT_NO_ROW = {"-M": "-M", "-F -M": "-M, -F", "-M pattern": "a pattern, -M"}
 CUT_COLUMNS = {  # the checked columns shown, and the -x that leaves them
     "FSUSE%": ["-x", "SMART"], "SMART": ["-x", "FSUSE%"], "both": [],
 }
@@ -518,49 +528,125 @@ def test_check_cut_rule_cell(monkeypatch, capsys, tmp_path, command, columns, fl
     else:
         run = _mac(monkeypatch, "/dev/none", diskutil=([], returncode))
     argv = ["--check", "-t", "0.5"] + CUT_COLUMNS[columns] + CUT_FLAGS[flags]
-    expected = ((3, [], "", _cut_line(command, 0.5, returncode)) if flags in _CUT_COUNTS[(command, columns)]
+    note = _no_row(CUT_NO_ROW[flags]) if command == "mount" and flags in CUT_NO_ROW else ""
+    expected = ((3, [], "", note + _cut_line(command, 0.5, returncode)) if flags in _CUT_COUNTS[(command, columns)]
                 else (0, [], "", ""))
     assert _run(monkeypatch, capsys, argv, run) == expected
 
 
 # A --check that can judge nothing: no checked column (-x leaves out both FSUSE% and SMART, which is also the only way
-# to leave no valid output field), or -v with no pattern or one that matches every cell (an empty "$SKIP", .*), which
-# keeps no row. 1.64 printed nothing and exited 0, over a failing disk too; it could not tell, so 3, with why on stderr.
+# to leave no valid output field), or no data row in the table, whatever the filters or their patterns are: the table
+# decides, not a probe of the patterns (-v '.+', -v '^$' keep no row, and -v '^$|a' keeps rows). 1.64 printed nothing and
+# exited 0, over a failing disk too; it could not tell, so 3, with why on stderr.
 
 NOTHING_X = "Nothing was checked: -x leaves out both FSUSE% and SMART; leave one in.\n"
-NOTHING_V = ('Nothing was checked: -v with no pattern, or one that matches every cell (an empty "$SKIP", .*), keeps no '
-             'row; give -v the pattern to leave out.\n')
+NOTHING_DEVICES = "Nothing was checked: no block device is listed or shown.\n"
 NO_VALID_FIELD = "Ignoring invalid output field: FOO.\nNo valid output fields specified.\n"
 
 
+# every Linux fixture row has an empty cell (LABEL, UUID, ...), and NAME is never empty
 @pytest.mark.parametrize("argv, err", [
-    (["-v"], NOTHING_V),
-    (["-D", "-v"], NOTHING_V),
-    (["-v", "0"], NOTHING_V),  # a trailing 0 is neither a pattern nor a watch
-    (["-v", ""], NOTHING_V),  # an empty pattern, as `-v "$SKIP"` gives when SKIP is empty: matches every cell
-    (["-v", ".*"], NOTHING_V),  # so does any pattern that matches everything
-    (["-v", "sdb", ""], NOTHING_V),  # one empty pattern among others: the alternation matches everything
-    (["-D", "-v", ""], NOTHING_V),  # -D matches device names: the same
+    (["-v"], _no_row("-v")),  # nothing to invert
+    (["-D", "-v"], _no_row("-v")),  # -D with no pattern is no filter
+    (["-v", "0"], _no_row("-v")),  # a trailing 0 is neither a pattern nor a watch
+    (["-v", ""], _no_row("-v, a pattern")),  # as `-v "$SKIP"` gives when SKIP is empty: matches every cell
+    (["-v", ".*"], _no_row("-v, a pattern")),
+    (["-v", ".+"], _no_row("-v, a pattern")),  # needs a character: NAME has one, so every row is out (1.65 build: exit 0)
+    (["-v", "."], _no_row("-v, a pattern")),
+    (["-v", "^$"], _no_row("-v, a pattern")),  # an empty cell: every row has one, so every row is out (1.65 build: exit 0)
+    (["-v", "$"], _no_row("-v, a pattern")),  # searched, not matched: an end anchor matches every cell
+    (["-v", "sdb", ""], _no_row("-v, a pattern")),  # one empty pattern among others: the alternation matches everything
+    (["-D", "-v", ""], _no_row("-v, a -D pattern")),  # -D matches device names: the same
+    (["-D", "-v", "."], _no_row("-v, a -D pattern")),  # (1.65 build: exit 0)
+    (["zzz"], _no_row("a pattern")),  # a typo, a disk that is gone: no row to judge (1.64: exit 0)
+    (["-D", "zzz"], _no_row("a -D pattern")),
+    (["-F", "zzz"], _no_row("a pattern, -F")),
     (["-x", "FSUSE%,SMART"], NOTHING_X),
     (["-x", "smart, fsuse%", "-o", "NAME,SIZE"], NOTHING_X),
     (["-x", "FSUSE%,SMART", "-o", "foo"], NO_VALID_FIELD + NOTHING_X),
-    (["-v", "-x", "FSUSE%,SMART"], NOTHING_X + NOTHING_V),
-], ids=["-v", "-D -v", "-v 0", "-v empty", "-v .*", "-v pattern and empty", "-D -v empty", "-x both", "-x both -o",
-        "no valid field", "both reasons"])
+    (["-v", "-x", "FSUSE%,SMART"], NOTHING_X + _no_row("-v")),
+], ids=["-v", "-D -v", "-v 0", "-v empty", "-v .*", "-v .+", "-v .", "-v ^$", "-v $", "-v pattern and empty",
+        "-D -v empty", "-D -v .", "pattern matching nothing", "-D pattern matching nothing", "-F pattern", "-x both",
+        "-x both -o", "no valid field", "both reasons"])
 def test_linux_check_that_can_judge_nothing_could_not_tell(monkeypatch, capsys, tmp_path, argv, err):
     run = _linux(monkeypatch, tmp_path, "/dev/sdb")  # sdb fails its SMART
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run) == (3, [], "", err)
 
 
 @pytest.mark.parametrize("argv, expected", [
-    (["-v", "sdb"], (0, [], "", "")),  # the operator's own pattern leaves the failing disk out
-    (["-v", "^$"], (0, [], "", "")),  # matches an empty cell only, not every cell: the operator's own
+    (["-v", "sdb"], (0, [], "", "")),  # the operator's own pattern leaves the failing disk out: sda and sda1 are judged
+    (["sda"], (0, [], "", "")),
+    (["-D", "-v", "sdb"], (0, [], "", "")),
     (["-x", "SMART"], (0, [], "", "")),
     (["-x", "FSUSE%"], (1, ["sdb", "sdb1"], "T\n", "")),
-], ids=["-v pattern", "-v ^$", "-x SMART", "-x FSUSE%"])
+], ids=["-v pattern", "pattern", "-D -v pattern", "-x SMART", "-x FSUSE%"])
 def test_linux_check_that_judges_something_is_as_before(monkeypatch, capsys, tmp_path, argv, expected):
     run = _linux(monkeypatch, tmp_path, "/dev/sdb")
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run) == expected
+
+
+@pytest.mark.parametrize("failing, expected", [
+    ("/dev/sdb", (1, ["sdb1"], "T\n", "")),
+    ("/dev/none", (0, [], "", "")),
+], ids=["failing disk", "healthy"])
+def test_linux_check_v_pattern_that_matches_an_empty_cell_or_more_keeps_the_rows_without_one(monkeypatch, capsys, tmp_path,
+                                                                                         failing, expected):
+    # -o NAME,SMART,FSUSE% leaves one empty cell on three rows, so `^$|a` drops them and every row with an "a"; sdb1
+    # (mounted, no "a" in its cells) stays and is judged. A probe that asked the pattern whether it matches "" and "a"
+    # called this "nothing was checked" (the 1.65 build, a false 3).
+    run = _linux(monkeypatch, tmp_path, failing, sdb1_mounted=True)
+    argv = ["--check", "-t", "0.5", "-o", "NAME,SMART,FSUSE%", "-v", "^$|a"]
+    assert _run(monkeypatch, capsys, argv, run) == expected
+
+
+def _sysfs_block(monkeypatch, listing):
+    """The real get_blocks(), with /sys/class/block listing `listing`: a list of entries, or an OSError to raise."""
+    real_listdir = os.listdir
+
+    def listdir(path):
+        if path != "/sys/class/block":
+            return real_listdir(path)
+        if isinstance(listing, Exception):
+            raise listing
+        return listing
+
+    monkeypatch.setattr(statblk, "get_blocks", REAL_GET_BLOCKS)
+    monkeypatch.setattr(statblk.os, "listdir", listdir)
+
+
+@pytest.mark.parametrize("listing", [[], FileNotFoundError(errno.ENOENT, "No such file or directory"), DENIED],
+                         ids=["empty", "missing", "not readable"])
+def test_linux_check_on_a_host_that_lists_no_block_device_could_not_tell(monkeypatch, capsys, tmp_path, listing):
+    # No /sys/class/block (a container with no sysfs, a chroot) or one that lists nothing: no row, so nothing was
+    # checked. 1.64 and the 1.65 build exited 0 (the deferral of 1.66, settled by the table rule).
+    run = _linux(monkeypatch, tmp_path, "/dev/sdb")
+    _sysfs_block(monkeypatch, listing)
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"], run) == (3, [], "", NOTHING_DEVICES)
+
+
+def test_linux_check_with_a_filter_on_a_host_that_lists_no_block_device_names_the_filter(monkeypatch, capsys, tmp_path):
+    run = _linux(monkeypatch, tmp_path, "/dev/sdb")
+    _sysfs_block(monkeypatch, [])
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-M"], run) == (3, [], "", _no_row("-M"))
+
+
+def test_linux_check_pseudo_on_a_host_that_lists_no_block_device_judges_the_mounts(monkeypatch, capsys, tmp_path):
+    # -P adds the mounts to the table (sda1's mount stays a row with no sysfs listing): rows were judged, so this is
+    # not "nothing was checked", and a full one is a problem.
+    run = _linux(monkeypatch, tmp_path, "/dev/none")
+    _sysfs_block(monkeypatch, [])
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-P"], run) == (0, [], "", "")
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-P"], run, usage=(1000, 950, 50)) == (
+        1, ["sda1"], "T\n", "")
+
+
+def test_linux_check_mounted_only_with_nothing_mounted_could_not_tell(monkeypatch, capsys, tmp_path):
+    run = _linux(monkeypatch, tmp_path, "/dev/sdb")
+    (tmp_path / "mountinfo").write_text("")  # nothing mounted: -M drops every device
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-M"], run) == (3, [], "", _no_row("-M"))
+    # the control: with sdb1 mounted, -M keeps its rows and sdb's failing SMART is judged
+    (tmp_path / "mountinfo").write_text(SDB1_MOUNTED)
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-M"], run) == (1, ["sdb1"], "T\n", "")
 
 
 @pytest.mark.parametrize("flag", ["-j", "-J"])
@@ -568,7 +654,7 @@ def test_check_that_can_judge_nothing_prints_what_a_healthy_one_does(monkeypatch
     # JSON as for a healthy run (the header row, or []); the exit and stderr tell them apart.
     run = _linux(monkeypatch, tmp_path, "/dev/sdb")
     code, names, out, err = _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-v", flag], run)
-    assert (code, names, err) == (3, [], NOTHING_V)
+    assert (code, names, err) == (3, [], _no_row("-v"))
     assert json.loads(out) == ([statblk.ALL_OUTPUT_FIELDS] if flag == "-j" else [])
 
 
@@ -581,4 +667,9 @@ def test_check_that_can_judge_nothing_names_a_command_that_did_not_answer(monkey
 
 def test_mac_check_with_no_pattern_to_invert_could_not_tell(monkeypatch, capsys):
     run = _mac(monkeypatch, "/dev/disk0")
-    assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-v"], run) == (3, [], "", NOTHING_V)
+    assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-v"], run) == (3, [], "", _no_row("-v"))
+
+
+def test_mac_check_with_a_pattern_that_matches_nothing_could_not_tell(monkeypatch, capsys):
+    run = _mac(monkeypatch, "/dev/disk0")
+    assert _run(monkeypatch, capsys, ["--check", "-t", "2", "sda"], run) == (3, [], "", _no_row("a pattern"))

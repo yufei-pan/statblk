@@ -1369,30 +1369,28 @@ def check_rows(rows, max_use):
 		return reported, CHECK_PROBLEM
 	return reported, CHECK_UNKNOWN if CHECK_UNKNOWN in statuses else CHECK_OK
 
-def nothing_to_check(header, invert_match, filter_patterns):
-	"""Why --check can judge nothing in a run whose table has this header: no checked column (-x leaves out both,
-	which is also the only way to have no valid output field), or -v with no pattern or one that matches every cell
-	(an empty "$SKIP", .*, ^, x*), which keeps no row. Each reason makes a healthy-looking run "could not tell" (3): a
-	check of nothing is not a healthy one. A pattern that matches an empty cell only (^$) is the operator's own.
+def nothing_to_check(table, filters):
+	"""Why --check could judge nothing from `table` (get_drives_info's rows, header first; empty when no output field
+	is valid), after the `filters` named on the command line: no checked column (-x leaves out both, which is also the
+	only way to be left no valid output field), or no data row. The table decides, whatever the filters are or what
+	their patterns match; the filters are named only to say why. A check of nothing is not a healthy one: each reason
+	makes a run that looks healthy "could not tell" (3).
 
-	>>> nothing_to_check(['NAME', 'SMART'], False, []), nothing_to_check(['NAME', 'FSUSE%'], True, ['sda', '^$'])
-	([], [])
-	>>> [len(nothing_to_check(['NAME', 'SMART'], True, patterns)) for patterns in ([], [''], ['sda', ''], ['.*'])]
-	[1, 1, 1, 1]
-	>>> nothing_to_check(['NAME', 'MOUNTPOINT'], True, [])[0]
-	'-x leaves out both FSUSE% and SMART; leave one in'
+	>>> nothing_to_check([['NAME', 'SMART'], ['sda', 'OK']], ['-v'])
+	[]
+	>>> nothing_to_check([['NAME', 'SMART']], ['-v', 'a pattern'])
+	['no row is left to judge after the filters (-v, a pattern)']
+	>>> nothing_to_check([['NAME', 'SMART']], [])
+	['no block device is listed or shown']
+	>>> nothing_to_check([['NAME', 'MOUNTPOINT'], ['sda', '/']], [])
+	['-x leaves out both FSUSE% and SMART; leave one in']
 	"""
 	reasons = []
-	if not set(CHECK_FIELDS).intersection(header):
+	if not set(CHECK_FIELDS).intersection(table[0] if table else ()):
 		reasons.append("-x leaves out both FSUSE% and SMART; leave one in")
-	if invert_match:
-		# Patterns are joined with | and searched in each cell (filter_rows): none joins to '', and an empty one makes
-		# the whole alternation match everywhere. One that matches both '' and 'a' is taken to match any cell; ^$ matches
-		# '' only, and rows without an empty cell stay.
-		pattern = compile_filter_pattern(filter_patterns or [])
-		if pattern.search('') and pattern.search('a'):
-			reasons.append('-v with no pattern, or one that matches every cell (an empty "$SKIP", .*), keeps no row; '
-				'give -v the pattern to leave out')
+	if len(table) == 1:
+		reasons.append(f"no row is left to judge after the filters ({', '.join(filters)})" if filters
+			else "no block device is listed or shown")
 	return reasons
 
 def cut_note(command, timeout, returncode=TIMEOUT_RETURNCODE):
@@ -1437,7 +1435,7 @@ def rows_to_objects(rows):
 
 def main():
 	parser = argparse.ArgumentParser(description="Gather disk and partition info for block devices.",
-		epilog="READ/WRITE: the first query shows each device's since-boot average (bytes / time spent on I/O, idle time left out), i.e. its typical work pattern, not a real-time rate; later watch refreshes show live rates.")
+		epilog="READ/WRITE: the first query shows each device's since-boot average (bytes / time spent on I/O, idle time left out), i.e. its typical work pattern, not a real-time rate; later watch refreshes show live rates (a device that /sys/class/block stops listing for one refresh starts over with its since-boot average when it returns).")
 	parser.add_argument('-j','--json', help="Produce JSON output (list of rows, header first)", action="store_true")
 	parser.add_argument('-J','--json_objects', help="Produce JSON output as a list of objects with numeric SIZE/READ/WRITE (bytes) and FSUSE%% (percent)", action="store_true")
 	parser.add_argument('-b','--bytes', help="Print the SIZE column in bytes rather than in a human-readable format", action="store_true")
@@ -1445,7 +1443,7 @@ def main():
 	parser.add_argument('-F','-fo','--formated_only', help="Show only formated filesystems", action="store_true")
 	parser.add_argument('-M','-mo','--mounted_only', help="Show only mounted filesystems", action="store_true")
 	parser.add_argument('-B','-bo','--best_only', help="Show only shortest mount point for each device", action="store_true")
-	parser.add_argument('-A','-ao','--active_only', help="Show only active devices (read/write activity since boot on the first query, during the last interval on later watch refreshes); rows with no throughput to read (macOS, -P) and mounts that fail (FSUSE%% ERROR or TIMEOUT) stay", action="store_true")
+	parser.add_argument('-A','-ao','--active_only', help="Show only active devices (read/write activity since boot on the first query, during the last interval on later watch refreshes; a device that /sys/class/block stops listing for one refresh starts over with its since-boot average when it returns); rows with no throughput to read (macOS, -P) and mounts that fail (FSUSE%% ERROR or TIMEOUT) stay", action="store_true")
 	parser.add_argument('-R','--full', help="Show full device information, do not collapse drive info when length > console length", action="store_true")
 	parser.add_argument('-P','--pseudo', help="Include pseudo file systems as well (tmpfs / nfs / cifs etc.)", action="store_true")
 	parser.add_argument('-o','--output', help="Specify which output columns to print.Use comma to separate columns. default: all available", default="all", type=str)
@@ -1453,7 +1451,7 @@ def main():
 	parser.add_argument('-t','--timeout', help="Set command timeout in seconds (default: 2; 0: no limit)", default=2, type=float)
 	parser.add_argument('-w','--watch', metavar='SECONDS', type=float, default=None,
 						help="Repeat output every SECONDS (watch mode). Equivalent to a trailing integer positional.")
-	parser.add_argument('--check', help="Health check: print the rows that need attention, and exit 1 if one has a problem (SMART failing, FSUSE%% >= --max_use, hung mount), else 3 if one could not be checked (SMART unreadable, FSUSE%% ERROR), if nothing could be (-x leaves out FSUSE%% and SMART, or -v has no pattern or one that matches every cell: said on stderr), or if a command that can hide what is checked did not answer in full (named on stderr); when all is healthy, print nothing (-j: the header row, -J: []) and exit 0", action="store_true")
+	parser.add_argument('--check', help="Health check: print the rows that need attention, and exit 1 if one has a problem (SMART failing, FSUSE%% >= --max_use, hung mount), else 3 if one could not be checked (SMART unreadable, FSUSE%% ERROR), if nothing could be (-x leaves out FSUSE%% and SMART, or the filters leave no row, or no block device is listed: said on stderr), or if a command that can hide what is checked did not answer in full (named on stderr); when all is healthy, print nothing (-j: the header row, -J: []) and exit 0", action="store_true")
 	parser.add_argument('--max_use', metavar='PCT', type=int, default=90, help="FSUSE%% at or above which --check reports a filesystem (default: 90)")
 	parser.add_argument('--sudo', help="Run commands as root with sudo. Needed for querying SMART info.", action="store_true")
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")
@@ -1501,6 +1499,10 @@ def main():
 	renote = redraw and sys.stderr is not None and sys.stderr.isatty()
 	check_status = CHECK_OK
 	nothing = []  # --check: why it could judge nothing (nothing_to_check)
+	# The filters in use, to say why no row was left (get_drives_info drops rows by them; -D alone drops none)
+	filters = [name for name, used in (('-v', args.invert_match),
+		('a -D pattern' if args.match_devname_only else 'a pattern', bool(args.filter_patterns)),
+		('-M', args.mounted_only), ('-F', args.formated_only), ('-A', args.active_only)) if used]
 	told = set()  # the commands whose note was printed
 	# --check: the checked columns a command that did not answer in full (stopped by --timeout, not found or failed) can
 	# hide. A filter drops a row only on a value that was read (get_drives_info), so such a command hides a check only
@@ -1524,13 +1526,13 @@ def main():
 								timeout=args.timeout,debug=args.debug,unanswered=unanswered,
 								)
 			if args.check:
-				read = results[0] if results else ()
+				read = results  # the table the check judges: results is reduced to the rows to report
 				results, check_status = check_rows(results, args.max_use)
-				nothing = nothing_to_check(read, args.invert_match, args.filter_patterns)
+				nothing = nothing_to_check(read, filters)
 				if check_status == CHECK_OK:
 					# A run that could judge nothing, or a command that can hide what --check reads, makes the run unknown;
 					# any other command stays quiet on exit 0.
-					if nothing or any(cut_hides(command).intersection(read) for command in unanswered):
+					if nothing or any(cut_hides(command).intersection(read[0] if read else []) for command in unanswered):
 						check_status = CHECK_UNKNOWN
 					else:
 						unanswered = {}
