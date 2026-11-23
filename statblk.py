@@ -259,7 +259,7 @@ Hl;gbiTI8o5D5Z4A,e4Oo1eTO3VRHO*Y;b,P#0]1$`&tE].&i0#sSq\f3m!L'S>Nm"MVl7L'hg,;[qaK
 K!8>YM<.Gl+aB]g5`V2VPBifYVHa,f%+Uq&+h-`SKf.?VJ24gBhH2a;a8hS>1gYeq#:Gdp6uc'''
 	exec(zlib.decompress(base64.a85decode(_SRC_B85)).decode("utf-8"), multiCMD.__dict__)
 
-version = '1.65'
+version = '1.66'
 VERSION = version
 __version__ = version
 COMMIT_DATE = '2026-11-23'
@@ -776,6 +776,23 @@ def display_device_name(device_path, full):
 			return device_path[len(prefix):]
 	return device_path
 
+def device_names(device):
+	"""The names -D matches a pattern against: the device path, the /dev/mapper/ path of a device-mapper device, and
+	each without its /dev(/mapper)/ prefix (the kernel name sda1 or dm-0, and the mapper name pve-root, which NAME
+	shows). 1.65 matched only the paths.
+
+	>>> device_names('/dev/sda1')
+	['/dev/sda1', 'sda1']
+	>>> device_names('server:/export')
+	['server:/export']
+	"""
+	names = []
+	for path in (device, get_mapper_path(device)):
+		for name in (path, display_device_name(path, False)):
+			if name not in names:
+				names.append(name)
+	return names
+
 def has_sysfs_device(disk):
 	"""True if the disk is backed by real hardware (sysfs 'device' link).
 
@@ -1123,7 +1140,7 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 		pattern = compile_filter_pattern(filter_patterns)
 		filtered_devices = set()
 		for device in target_devices:
-			match = pattern.search(device) or pattern.search(get_mapper_path(device))
+			match = any(pattern.search(name) for name in device_names(device))
 			if (match and not invert_match) or (not match and invert_match):
 				filtered_devices.add(device)
 		target_devices = filtered_devices
@@ -1373,9 +1390,11 @@ def check_rows(rows, max_use):
 def nothing_to_check(table, filters):
 	"""Why --check could judge nothing from `table` (get_drives_info's rows, header first; empty when no output field
 	is valid), after the `filters` named on the command line: no checked column (-x leaves out both, which is also the
-	only way to be left no valid output field), or no data row. The table decides, whatever the filters are or what
+	only way to be left no valid output field), no data row, or no row with a value in a checked column (an unmounted
+	loop, zram or device-mapper device has no FSUSE% and no SMART). The table decides, whatever the filters are or what
 	their patterns match; the filters are named only to say why. A check of nothing is not a healthy one: each reason
-	makes a run that looks healthy "could not tell" (3).
+	makes a run that looks healthy "could not tell" (3). A row with a checked value is judged, so a run with one has
+	no reason here; one with none has no problem or unknown either (a blank SMART is healthy, a blank FSUSE% unread).
 
 	>>> nothing_to_check([['NAME', 'SMART'], ['sda', 'OK']], ['-v'])
 	[]
@@ -1385,13 +1404,21 @@ def nothing_to_check(table, filters):
 	['no block device is listed or shown']
 	>>> nothing_to_check([['NAME', 'MOUNTPOINT'], ['sda', '/']], [])
 	['-x leaves out both FSUSE% and SMART; leave one in']
+	>>> nothing_to_check([['NAME', 'FSUSE%', 'SMART'], ['loop0', '', ''], ['dm-0', '', '']], [])
+	['no row holds a value in FSUSE% or SMART']
+	>>> nothing_to_check([['NAME', 'FSUSE%', 'SMART'], ['loop0', '', ''], ['sda', '', 'OK']], [])
+	[]
 	"""
+	header = table[0] if table else []
+	checked = [field for field in CHECK_FIELDS if field in header]
 	reasons = []
-	if not set(CHECK_FIELDS).intersection(table[0] if table else ()):
+	if not checked:
 		reasons.append("-x leaves out both FSUSE% and SMART; leave one in")
 	if len(table) == 1:
 		reasons.append(f"no row is left to judge after the filters ({', '.join(filters)})" if filters
 			else "no block device is listed or shown")
+	elif checked and not any(row[header.index(field)] for row in table[1:] for field in checked):
+		reasons.append(f"no row holds a value in {' or '.join(checked)}")
 	return reasons
 
 def cut_note(command, timeout, returncode=TIMEOUT_RETURNCODE):
@@ -1452,13 +1479,13 @@ def main():
 	parser.add_argument('-t','--timeout', help="Set command timeout in seconds (default: 2; 0: no limit)", default=2, type=float)
 	parser.add_argument('-w','--watch', metavar='SECONDS', type=float, default=None,
 						help="Repeat output every SECONDS (watch mode). Equivalent to a trailing integer positional.")
-	parser.add_argument('--check', help="Health check: print the rows that need attention, and exit 1 if one has a problem (SMART failing, FSUSE%% >= --max_use, hung mount), else 3 if one could not be checked (SMART unreadable, FSUSE%% ERROR), if nothing could be (-x leaves out FSUSE%% and SMART, or the filters leave no row, or no block device is listed: said on stderr), or if a command that can hide what is checked did not answer in full (named on stderr); when all is healthy, print nothing (-j: the header row, -J: []) and exit 0", action="store_true")
+	parser.add_argument('--check', help="Health check: print the rows that need attention, and exit 1 if one has a problem (SMART failing, FSUSE%% >= --max_use, hung mount), else 3 if one could not be checked (SMART unreadable, FSUSE%% ERROR), if nothing could be (-x leaves out FSUSE%% and SMART, or the filters leave no row, or no block device is listed, or no row holds a value in FSUSE%% or SMART: said on stderr), or if a command that can hide what is checked did not answer in full (named on stderr); when all is healthy, print nothing (-j: the header row, -J: []) and exit 0", action="store_true")
 	parser.add_argument('--max_use', metavar='PCT', type=int, default=90, help="FSUSE%% at or above which --check reports a filesystem (default: 90)")
 	parser.add_argument('--sudo', help="Run commands as root with sudo. Needed for querying SMART info.", action="store_true")
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")
 	parser.add_argument('--show_squashfs', help="Show squashfs images on loop devices (snaps, AppImages), hidden by default", action="store_true")
 	parser.add_argument('--show_empty_columns', help="Keep table columns that are empty for every row (hidden by default unless named in -o)", action="store_true")
-	parser.add_argument('-D','--match_devname_only', help="Change filter pattern to match just the device names instead of the full line", action="store_true")
+	parser.add_argument('-D','--match_devname_only', help="Match the patterns against the device's names only, not the other cells: its path, its kernel name and the name NAME shows (/dev/sda1 and sda1; /dev/dm-0, dm-0, /dev/mapper/pve-root and pve-root)", action="store_true")
 	parser.add_argument('-v','--invert_match', help="Invert the filter match", action="store_true")
 	parser.add_argument('--debug', help="Print suppressed exceptions to stderr for troubleshooting", action="store_true")
 	parser.add_argument('filter_patterns', nargs='*', help="Filter pattern(s) to match (e.g., sda, nvme0n1p1, btrfs). A trailing integer is treated as --watch SECONDS; append 0 to filter a number without watching.")

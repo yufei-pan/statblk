@@ -30,6 +30,11 @@ def _no_row(filters):
     return f"Nothing was checked: no row is left to judge after the filters ({filters}).\n"
 
 
+def _no_value(columns="FSUSE% or SMART"):
+    """--check's line when the table has rows but none holds a value in a checked column."""
+    return f"Nothing was checked: no row holds a value in {columns}.\n"
+
+
 def _run_tables(monkeypatch, capsys, argv, run_command, usage=(1000, 350, 650)):
     """main() with `argv`; return (exit, the tables printed, stdout, stderr). usage is what each mount's statvfs
     answers (total, used, avail: 35% used), or an exception that the real get_statvfs_use_size meets."""
@@ -529,6 +534,8 @@ def test_check_cut_rule_cell(monkeypatch, capsys, tmp_path, command, columns, fl
         run = _mac(monkeypatch, "/dev/none", diskutil=([], returncode))
     argv = ["--check", "-t", "0.5"] + CUT_COLUMNS[columns] + CUT_FLAGS[flags]
     note = _no_row(CUT_NO_ROW[flags]) if command == "mount" and flags in CUT_NO_ROW else ""
+    if command == "mount" and columns == "FSUSE%" and flags not in CUT_NO_ROW:
+        note = _no_value("FSUSE%")  # the mount listed nothing, so no row has a FSUSE% to judge (1.65 said nothing)
     expected = ((3, [], "", note + _cut_line(command, 0.5, returncode)) if flags in _CUT_COUNTS[(command, columns)]
                 else (0, [], "", ""))
     assert _run(monkeypatch, capsys, argv, run) == expected
@@ -587,6 +594,18 @@ def test_linux_check_that_judges_something_is_as_before(monkeypatch, capsys, tmp
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run) == expected
 
 
+@pytest.mark.parametrize("argv, expected", [
+    (["-D", "^sdb$"], (1, ["sdb"], "T\n", "")),  # the disk by the name NAME shows (1.65: no row, exit 3)
+    (["-D", "^sdb"], (1, ["sdb", "sdb1"], "T\n", "")),  # the disk and its partition (1.65: no row, exit 3)
+    (["-D", "^/dev/sdb$"], (1, ["sdb"], "T\n", "")),  # the path, as in 1.65
+    (["-D", "-v", "^sdb"], (0, [], "", "")),  # sda and sda1 are judged (1.65 kept sdb too, since no path starts so)
+    (["-D", "-v", "^sd"], (3, [], "", _no_row("-v, a -D pattern"))),  # 1.65 kept every row and exited 1
+], ids=["-D ^sdb$", "-D ^sdb", "-D path", "-D -v ^sdb", "-D -v ^sd"])
+def test_linux_check_devname_pattern_matches_the_name_shown(monkeypatch, capsys, tmp_path, argv, expected):
+    run = _linux(monkeypatch, tmp_path, "/dev/sdb")  # sdb fails its SMART
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run) == expected
+
+
 @pytest.mark.parametrize("failing, expected", [
     ("/dev/sdb", (1, ["sdb1"], "T\n", "")),
     ("/dev/none", (0, [], "", "")),
@@ -599,6 +618,91 @@ def test_linux_check_v_pattern_that_matches_an_empty_cell_or_more_keeps_the_rows
     run = _linux(monkeypatch, tmp_path, failing, sdb1_mounted=True)
     argv = ["--check", "-t", "0.5", "-o", "NAME,SMART,FSUSE%", "-v", "^$|a"]
     assert _run(monkeypatch, capsys, argv, run) == expected
+
+
+# A row whose checked cells are all blank is not judged: an unmounted loop, zram or device-mapper device has no mount
+# (FSUSE%) and no SMART. 1.65 counted such a row healthy, so a host whose table held only such rows exited 0 with
+# nothing judged (and so did -x SMART with nothing mounted). A host with real disks beside them is judged by its disks.
+
+VIRTUAL = ["/dev/dm-0", "/dev/loop0", "/dev/zram0"]
+VIRTUAL_NAMES = ["vg-lv", "loop0", "zram0"]
+LOOP0_MOUNTED = "102 99 7:0 / /mnt/img rw,relatime - ext4 /dev/loop0 rw\n"
+
+
+def _virtual(monkeypatch, tmp_path, failing="/dev/none", disks=False, mountinfo="", smart=None):
+    """_linux's host with VIRTUAL devices (no SMART), and its disks (sda, sdb) too when `disks`; `mountinfo` replaces
+    its mount table (nothing mounted by default); `smart` is what every disk's smartctl answers, if not _linux's."""
+    run = _linux(monkeypatch, tmp_path, failing)
+    disk_devices = ["/dev/sda", "/dev/sda1", "/dev/sdb", "/dev/sdb1"] if disks else []
+    monkeypatch.setattr(statblk, "get_blocks", lambda: VIRTUAL + disk_devices)
+    monkeypatch.setattr(statblk, "has_sysfs_device", lambda disk: os.path.basename(disk).startswith("sd"))
+    monkeypatch.setattr(statblk, "get_mapper_path", lambda d: "/dev/mapper/vg-lv" if d == "/dev/dm-0" else d)
+    (tmp_path / "mountinfo").write_text(mountinfo)
+    if smart is None:
+        return run
+
+    def run_smart(command, *a, **k):
+        return FakeCmdResult([smart]) if "smartctl" in command else run(command, *a, **k)
+    return run_smart
+
+
+@pytest.mark.parametrize("argv, err", [
+    ([], _no_value()),
+    (["-P"], _no_value()),  # nothing mounted: -P adds no row
+    (["-x", "SMART"], _no_value("FSUSE%")),
+    (["-x", "FSUSE%"], _no_value("SMART")),
+    (["-D", "^loop|^zram"], _no_value()),
+], ids=["plain", "-P", "-x SMART", "-x FSUSE%", "-D pattern"])
+def test_linux_check_of_rows_with_no_value_could_not_tell(monkeypatch, capsys, tmp_path, argv, err):
+    run = _virtual(monkeypatch, tmp_path)
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run) == (3, [], "", err)
+
+
+@pytest.mark.parametrize("flag", ["-j", "-J"])
+def test_linux_check_of_rows_with_no_value_prints_what_a_healthy_one_does(monkeypatch, capsys, tmp_path, flag):
+    run = _virtual(monkeypatch, tmp_path)
+    code, names, out, err = _run(monkeypatch, capsys, ["--check", "-t", "0.5", flag], run)
+    assert (code, names, err) == (3, [], _no_value())
+    assert json.loads(out) == ([statblk.ALL_OUTPUT_FIELDS] if flag == "-j" else [])
+
+
+@pytest.mark.parametrize("usage, expected", [
+    ((1000, 350, 650), (0, [], "", "")),
+    ((1000, 950, 50), (1, ["loop0"], "T\n", "")),
+], ids=["healthy", "full"])
+def test_linux_check_of_a_mounted_virtual_device_judges_its_use(monkeypatch, capsys, tmp_path, usage, expected):
+    # loop0 is mounted: its FSUSE% is a value, so the run judged it, whatever the other rows hold.
+    run = _virtual(monkeypatch, tmp_path, mountinfo=LOOP0_MOUNTED)
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"], run, usage=usage) == expected
+
+
+@pytest.mark.parametrize("failing, argv, expected", [
+    ("/dev/none", [], (0, [], "", "")),  # the disks are judged: virtual devices beside them change nothing
+    ("/dev/sdb", [], (1, ["sdb", "sdb1"], "T\n", "")),
+    ("/dev/none", ["-x", "FSUSE%"], (0, [], "", "")),
+    ("/dev/none", ["-x", "SMART"], (3, [], "", _no_value("FSUSE%"))),  # nothing mounted: no FSUSE% anywhere
+    ("/dev/sdb", ["-D", "-v", "^sd"], (3, [], "", _no_value())),  # the pattern leaves only the virtual devices
+    ("/dev/sda", ["-D", "-v", "^sda|^loop|^zram|^vg"], (0, [], "", "")),  # the failing sda is left out by its name (1.65 kept it: exit 1)
+], ids=["healthy", "failing disk", "-x FSUSE%", "-x SMART", "-D -v ^sd", "-D -v sda"])
+def test_linux_check_of_disks_beside_virtual_devices(monkeypatch, capsys, tmp_path, failing, argv, expected):
+    run = _virtual(monkeypatch, tmp_path, failing, disks=True)
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run) == expected
+
+
+def test_linux_check_of_a_disk_in_standby_judged_it(monkeypatch, capsys, tmp_path):
+    # STANDBY is smartctl's answer (the disk is spun down, checked when next awake): a value, so the run is healthy.
+    run = _virtual(monkeypatch, tmp_path, disks=True, smart="Device is in STANDBY mode, exit(2)")
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"], run) == (0, [], "", "")
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-x", "SMART"], run) == (3, [], "", _no_value("FSUSE%"))
+
+
+def test_mac_check_of_rows_with_no_value_could_not_tell(monkeypatch, capsys):
+    # -x SMART leaves FSUSE% alone to judge, and disk0 (the SSD) and its slices are not mounted (1.65: exit 0).
+    run = _mac(monkeypatch, "/dev/disk0")
+    assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-x", "SMART", "-D", "^/dev/disk0"], run) == (
+        3, [], "", _no_value("FSUSE%"))
+    # the control: disk3's volumes are mounted, so their FSUSE% is judged
+    assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-x", "SMART", "-D", "^/dev/disk3"], run) == (0, [], "", "")
 
 
 def _sysfs_block(monkeypatch, listing):
@@ -679,6 +783,14 @@ def test_check_that_can_judge_nothing_names_a_command_that_did_not_answer(monkey
 def test_mac_check_with_no_pattern_to_invert_could_not_tell(monkeypatch, capsys):
     run = _mac(monkeypatch, "/dev/disk0")
     assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-v"], run) == (3, [], "", _no_row("-v"))
+
+
+@pytest.mark.parametrize("pattern, names", [("^disk0$", ["disk0"]), ("^/dev/disk0$", ["disk0"]), ("^disk0", DISK0)],
+                         ids=["name", "path", "disk and slices"])
+def test_mac_check_devname_pattern_matches_the_name_shown(monkeypatch, capsys, pattern, names):
+    # macOS names are /dev/diskN, shown as diskN: 1.65 matched only the path, so `-D '^disk0$'` left no row (exit 3).
+    run = _mac(monkeypatch, "/dev/disk0")
+    assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-D", pattern], run) == (1, names, "T\n", "")
 
 
 def test_mac_check_with_a_pattern_that_matches_nothing_could_not_tell(monkeypatch, capsys):
