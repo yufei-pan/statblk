@@ -265,3 +265,27 @@ def test_nothing_cut_says_nothing(monkeypatch, capsys):
     code, _ = _run_main_cut(monkeypatch, ["statblk", "--check"], [CHECK_ROWS[0], CHECK_ROWS[2]], [])
     assert not code
     assert capsys.readouterr() == ("", "")
+
+
+# nothing_to_check(): a row is judged only when one of its checked cells holds a value (1.65 judged every row).
+NO_VALUE = "no row holds a value in FSUSE% or SMART"
+
+
+@pytest.mark.parametrize("table, reasons", [
+    ([HEADER, ["loop0", "", ""], ["zram0", "", ""]], [NO_VALUE]),
+    ([HEADER, ["loop0", "", ""], ["sda", "", "OK"]], []),  # sda's SMART is judged
+    ([HEADER, ["loop0", "", ""], ["loop1", "10%", ""]], []),  # loop1's use is judged
+    ([HEADER, ["sda", "", "STANDBY"]], []),  # smartctl's answer for a spun-down disk is a value
+    ([HEADER, ["sda", "", "UNKNOWN"]], []),  # a value check_rows counts unknown: judged, and not "nothing"
+    ([HEADER, ["sda1", "ERROR", ""]], []),
+    ([HEADER, ["sda1", "N/A", ""]], []),  # statvfs answered: no space at all
+    ([["NAME", "FSUSE%"], ["sda", ""]], ["no row holds a value in FSUSE%"]),  # -x SMART
+    ([["NAME", "SMART"], ["loop0", ""]], ["no row holds a value in SMART"]),  # -x FSUSE%
+    ([["NAME", "SMART", "MOUNTPOINT", "FSUSE%"], ["loop0", "", "/mnt", ""]], [NO_VALUE]),  # any column order
+    ([["NAME", "MOUNTPOINT"], ["loop0", ""]], ["-x leaves out both FSUSE% and SMART; leave one in"]),  # one reason
+    ([HEADER], ["no block device is listed or shown"]),  # one reason
+    ([], ["-x leaves out both FSUSE% and SMART; leave one in"]),
+], ids=["virtual only", "a disk", "a mount", "standby", "unknown", "error", "N/A", "-x SMART", "-x FSUSE%",
+        "column order", "no checked column", "no row", "no valid field"])
+def test_nothing_to_check_judges_a_row_only_by_a_value(table, reasons):
+    assert statblk.nothing_to_check(table, []) == reasons

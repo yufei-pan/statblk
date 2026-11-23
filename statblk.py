@@ -1389,9 +1389,11 @@ def check_rows(rows, max_use):
 def nothing_to_check(table, filters):
 	"""Why --check could judge nothing from `table` (get_drives_info's rows, header first; empty when no output field
 	is valid), after the `filters` named on the command line: no checked column (-x leaves out both, which is also the
-	only way to be left no valid output field), or no data row. The table decides, whatever the filters are or what
+	only way to be left no valid output field), no data row, or no row with a value in a checked column (an unmounted
+	loop, zram or device-mapper device has no FSUSE% and no SMART). The table decides, whatever the filters are or what
 	their patterns match; the filters are named only to say why. A check of nothing is not a healthy one: each reason
-	makes a run that looks healthy "could not tell" (3).
+	makes a run that looks healthy "could not tell" (3). A row with a checked value is judged, so a run with one has
+	no reason here; one with none has no problem or unknown either (a blank SMART is healthy, a blank FSUSE% unread).
 
 	>>> nothing_to_check([['NAME', 'SMART'], ['sda', 'OK']], ['-v'])
 	[]
@@ -1401,13 +1403,21 @@ def nothing_to_check(table, filters):
 	['no block device is listed or shown']
 	>>> nothing_to_check([['NAME', 'MOUNTPOINT'], ['sda', '/']], [])
 	['-x leaves out both FSUSE% and SMART; leave one in']
+	>>> nothing_to_check([['NAME', 'FSUSE%', 'SMART'], ['loop0', '', ''], ['dm-0', '', '']], [])
+	['no row holds a value in FSUSE% or SMART']
+	>>> nothing_to_check([['NAME', 'FSUSE%', 'SMART'], ['loop0', '', ''], ['sda', '', 'OK']], [])
+	[]
 	"""
+	header = table[0] if table else []
+	checked = [field for field in CHECK_FIELDS if field in header]
 	reasons = []
-	if not set(CHECK_FIELDS).intersection(table[0] if table else ()):
+	if not checked:
 		reasons.append("-x leaves out both FSUSE% and SMART; leave one in")
 	if len(table) == 1:
 		reasons.append(f"no row is left to judge after the filters ({', '.join(filters)})" if filters
 			else "no block device is listed or shown")
+	elif checked and not any(row[header.index(field)] for row in table[1:] for field in checked):
+		reasons.append(f"no row holds a value in {' or '.join(checked)}")
 	return reasons
 
 def cut_note(command, timeout, returncode=TIMEOUT_RETURNCODE):
@@ -1468,7 +1478,7 @@ def main():
 	parser.add_argument('-t','--timeout', help="Set command timeout in seconds (default: 2; 0: no limit)", default=2, type=float)
 	parser.add_argument('-w','--watch', metavar='SECONDS', type=float, default=None,
 						help="Repeat output every SECONDS (watch mode). Equivalent to a trailing integer positional.")
-	parser.add_argument('--check', help="Health check: print the rows that need attention, and exit 1 if one has a problem (SMART failing, FSUSE%% >= --max_use, hung mount), else 3 if one could not be checked (SMART unreadable, FSUSE%% ERROR), if nothing could be (-x leaves out FSUSE%% and SMART, or the filters leave no row, or no block device is listed: said on stderr), or if a command that can hide what is checked did not answer in full (named on stderr); when all is healthy, print nothing (-j: the header row, -J: []) and exit 0", action="store_true")
+	parser.add_argument('--check', help="Health check: print the rows that need attention, and exit 1 if one has a problem (SMART failing, FSUSE%% >= --max_use, hung mount), else 3 if one could not be checked (SMART unreadable, FSUSE%% ERROR), if nothing could be (-x leaves out FSUSE%% and SMART, or the filters leave no row, or no block device is listed, or no row holds a value in FSUSE%% or SMART: said on stderr), or if a command that can hide what is checked did not answer in full (named on stderr); when all is healthy, print nothing (-j: the header row, -J: []) and exit 0", action="store_true")
 	parser.add_argument('--max_use', metavar='PCT', type=int, default=90, help="FSUSE%% at or above which --check reports a filesystem (default: 90)")
 	parser.add_argument('--sudo', help="Run commands as root with sudo. Needed for querying SMART info.", action="store_true")
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")
