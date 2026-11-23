@@ -536,15 +536,17 @@ def test_check_cut_rule_cell(monkeypatch, capsys, tmp_path, command, columns, fl
 
 # A --check that can judge nothing: no checked column (-x leaves out both FSUSE% and SMART, which is also the only way
 # to leave no valid output field), or no data row in the table, whatever the filters or their patterns are: the table
-# decides, not a probe of the patterns (-v '.+', -v '^$' keep no row, and -v '^$|a' keeps rows). 1.64 printed nothing and
-# exited 0, over a failing disk too; it could not tell, so 3, with why on stderr.
+# decides, not a probe of the patterns (-v '.+' keeps no row, since NAME is never blank; -v '^$' keeps none from the
+# fixture's default columns, where every row has an empty cell, which a real host's fully filled row would not have;
+# -v '^$|a' keeps rows with narrower columns). 1.64 printed nothing and exited 0, over a failing disk too; it could not
+# tell, so 3, with why on stderr.
 
 NOTHING_X = "Nothing was checked: -x leaves out both FSUSE% and SMART; leave one in.\n"
 NOTHING_DEVICES = "Nothing was checked: no block device is listed or shown.\n"
 NO_VALID_FIELD = "Ignoring invalid output field: FOO.\nNo valid output fields specified.\n"
 
 
-# every Linux fixture row has an empty cell (LABEL, UUID, ...), and NAME is never empty
+# in the default columns every Linux fixture row has an empty cell (LABEL is blank on all four), and NAME is never empty
 @pytest.mark.parametrize("argv, err", [
     (["-v"], _no_row("-v")),  # nothing to invert
     (["-D", "-v"], _no_row("-v")),  # -D with no pattern is no filter
@@ -553,7 +555,7 @@ NO_VALID_FIELD = "Ignoring invalid output field: FOO.\nNo valid output fields sp
     (["-v", ".*"], _no_row("-v, a pattern")),
     (["-v", ".+"], _no_row("-v, a pattern")),  # needs a character: NAME has one, so every row is out (1.65 build: exit 0)
     (["-v", "."], _no_row("-v, a pattern")),
-    (["-v", "^$"], _no_row("-v, a pattern")),  # an empty cell: every row has one, so every row is out (1.65 build: exit 0)
+    (["-v", "^$"], _no_row("-v, a pattern")),  # an empty cell: every fixture row has one, so every row is out (not so on every host; 1.65 build: exit 0)
     (["-v", "$"], _no_row("-v, a pattern")),  # searched, not matched: an end anchor matches every cell
     (["-v", "sdb", ""], _no_row("-v, a pattern")),  # one empty pattern among others: the alternation matches everything
     (["-D", "-v", ""], _no_row("-v, a -D pattern")),  # -D matches device names: the same
@@ -591,9 +593,9 @@ def test_linux_check_that_judges_something_is_as_before(monkeypatch, capsys, tmp
 ], ids=["failing disk", "healthy"])
 def test_linux_check_v_pattern_that_matches_an_empty_cell_or_more_keeps_the_rows_without_one(monkeypatch, capsys, tmp_path,
                                                                                          failing, expected):
-    # -o NAME,SMART,FSUSE% leaves one empty cell on three rows, so `^$|a` drops them and every row with an "a"; sdb1
-    # (mounted, no "a" in its cells) stays and is judged. A probe that asked the pattern whether it matches "" and "a"
-    # called this "nothing was checked" (the 1.65 build, a false 3).
+    # -o NAME,SMART,FSUSE% leaves one empty cell (FSUSE% of a whole disk) on two rows, sda and sdb, so `^$|a` drops them
+    # and every row with an "a"; sdb1 (mounted, no "a" in its cells) stays and is judged. A probe that asked the
+    # pattern whether it matches "" and "a" called this "nothing was checked" (the 1.65 build, a false 3).
     run = _linux(monkeypatch, tmp_path, failing, sdb1_mounted=True)
     argv = ["--check", "-t", "0.5", "-o", "NAME,SMART,FSUSE%", "-v", "^$|a"]
     assert _run(monkeypatch, capsys, argv, run) == expected
