@@ -174,7 +174,7 @@ Uses `diskutil` and `mount`, found in `/usr/sbin` and `/sbin` too when `PATH` la
 ## Upgrading to 1.66 from 1.65
 
 - `-D` also matches the name `NAME` shows, not only the device path: `-D '^sda$'` now finds the disk (1.65 searched `/dev/sda` only, so it found nothing and `--check` exited 3), `-D '^pve-root$'` the device-mapper device. Every pattern that matched in 1.65 still matches; a `-D -v` pattern can now drop a row that 1.65 kept: `-D -v '^s'` kept every row (no path starts with `s`) and now leaves out `sda` and its partitions.
-- `--check` exits 3, with `Nothing was checked: no row holds a value in FSUSE% or SMART.` on stderr, when the table has rows but none holds a value in a checked column: a host, or a filter, that leaves only unmounted loop, zram or device-mapper devices, or `-x SMART` with nothing mounted. 1.65 exited 0. A host with disks beside such devices is judged by its disks, as before.
+- `--check` exits 3, with `Nothing was checked: no row holds a value in FSUSE% or SMART.` on stderr, when the table has rows but none holds a value in a checked column: a host, or a filter, that leaves only unmounted loop, zram or device-mapper devices, or `-x SMART` with nothing mounted. 1.65 exited 0. A host with disks beside such devices is judged by its disks, as before. A container that lists the host's block devices but mounts none of them (its root on overlay or ZFS storage) is such a host: add `-P` to judge its own mounts.
 
 ## Upgrading to 1.65 from 1.64
 
