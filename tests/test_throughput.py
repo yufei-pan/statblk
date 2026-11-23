@@ -90,9 +90,9 @@ def test_rate_after_a_sample_that_was_not_read_counts_from_the_last_one_read(tmp
 
 
 @pytest.mark.parametrize("read_after, written_after, expected", [
-    (1000, 4000 + 2000, (None, 2000 * 512 // 2)),  # the read counter was reset (it wrapped): READ blank, WRITE live
+    (1000, 4000 + 2000, (None, 2000 * 512 // 2)),  # the read counter went back (2000 to 1000): READ blank, WRITE live
     (1000, 1000, (None, None)),  # both reset: the device was removed and added again under its name
-], ids=["read wrapped", "device re-added"])
+], ids=["read counter went back", "device re-added"])
 def test_counter_reset_between_samples_has_no_rate_for_that_interval(tmp_path, monkeypatch, read_after,
                                                                        written_after, expected):
     # A counter below the last sample's was reset in between: what the interval moved is not known, so that

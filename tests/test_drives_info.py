@@ -1,6 +1,7 @@
 import errno
 import os
 from collections import defaultdict
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +11,7 @@ from fakes import FakeCmdResult, make_sysfs_block, redirect_sys_class_block
 REAL_READ_DISCARD_SUPPORT = statblk.read_discard_support
 REAL_READ_MODEL_AND_SERIAL = statblk.read_model_and_serial
 REAL_PARSE_MOUNT = statblk.parseMount
+REAL_THROUGHPUT_ITER = statblk.get_read_write_rate_throughput_iter
 
 
 def _mount_table(device="/dev/sda1", mp="/data"):
@@ -659,8 +661,8 @@ def test_active_only_keeps_the_pseudo_rows(monkeypatch):
     assert rows[1:] == [["sda1", "/data"], ["server:/export", "/mnt/nfs"], ["tmpfs", "/tmp"]]
 
 
-@pytest.mark.parametrize("throughput, kept", [((0, 0), False), ((None, None), True), ((0, 5), True)],
-                         ids=["read as idle", "not read", "active"])
+@pytest.mark.parametrize("throughput, kept", [((0, 0), False), ((None, None), True), ((None, 0), True), ((0, 5), True)],
+                         ids=["read as idle", "not read", "one direction not read", "active"])
 def test_active_only_drops_only_a_device_read_as_idle(monkeypatch, throughput, kept):
     # A stat that could not be read (the device vanished after the listing) is not idle; 1.63 read it as 0 B/s.
     _patch_linux_basics(monkeypatch, devices=["/dev/sda1"])
@@ -669,6 +671,43 @@ def test_active_only_drops_only_a_device_read_as_idle(monkeypatch, throughput, k
     rows = statblk.get_drives_info(output="NAME,READ,WRITE", active_only=True, timeout=2, print_bytes=True)
     assert rows[1:] == ([["sda1", "" if throughput[0] is None else str(throughput[0]),
                           "" if throughput[1] is None else str(throughput[1])]] if kept else [])
+
+
+STAT_BEFORE = "0 0 2000 1000 0 0 4000 2000 0 0 0\n"  # 1 MiB read in 1 s busy, 2 MiB written in 2 s: both 1 MiB/s
+STAT_RESET = "0 0 100 100 0 0 200 200 0 0 0\n"  # below STAT_BEFORE: 50 KiB read in 0.1 s busy, 100 KiB written in 0.2 s
+
+
+@pytest.mark.parametrize("missing_at_the_next_refresh, expected", [
+    (False, ["", ""]),  # listed at the refresh after the reset: the counter went back, no rate for that interval
+    (True, ["512000", "512000"]),  # not listed at one refresh: it starts over on its return, with its average since
+], ids=["listed", "missing for a refresh"])
+def test_a_device_missing_at_a_refresh_starts_its_rate_over_on_return(monkeypatch, tmp_path, missing_at_the_next_refresh,
+                                                                       expected):
+    # get_drives_info() drops the throughput iterator of a device that get_blocks() leaves out, so one removed and added
+    # again while absent from a refresh gets a new one: the average since it came back (as the first query shows), not
+    # the blank that a counter going back gives a device that stays listed (README, READ / WRITE numbers).
+    block = make_sysfs_block(tmp_path, "sda1", size_sectors=10)
+    stat = block / "stat"
+    redirect_sys_class_block(tmp_path, monkeypatch)
+    devices = ["/dev/sda1"]
+    _patch_linux_basics(monkeypatch, devices=devices, mounts=defaultdict(list))
+    monkeypatch.setattr(statblk, "get_read_write_rate_throughput_iter", REAL_THROUGHPUT_ITER)
+    ticks = iter(range(100, 200, 2))
+    monkeypatch.setattr(statblk, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+    _patch_multicmd(monkeypatch, FakeCmdResult([], 0))
+    tptDict = {}
+
+    def refresh():
+        return statblk.get_drives_info(output="NAME,READ,WRITE", timeout=0, print_bytes=True, tptDict=tptDict)[1:]
+
+    stat.write_text(STAT_BEFORE)
+    assert refresh() == [["sda1", "1024000", "1024000"]]  # the first query: since boot
+    if missing_at_the_next_refresh:
+        devices.clear()
+        assert refresh() == []
+        devices.append("/dev/sda1")
+    stat.write_text(STAT_RESET)
+    assert refresh() == [["sda1"] + expected]
 
 
 @pytest.mark.parametrize("statvfs, kept", [
