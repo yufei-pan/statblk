@@ -10,13 +10,15 @@ ROWS = [["NAME", "READ", "FSTYPE"], ["sda", "1 MiB/s", "ext4"]]
 CLEAR = "\x1b[H\x1b[J"
 
 
-def _run(monkeypatch, argv, tty=False, refreshes=2, rows=ROWS, cuts=([],)):
+def _run(monkeypatch, argv, tty=False, refreshes=2, rows=ROWS, cuts=([],), stderr_tty=None):
     """Run main() for up to `refreshes` refreshes; return (sleeps, get_drives_info kwargs).
 
+    tty: whether stdout is a terminal; stderr_tty: whether stderr is (None: the same as stdout, as when both are the
+    screen, or both are redirected).
     cuts: what get_drives_info records at each refresh (the last item repeats): a dict of the commands that did not
     answer in full and their return codes, or a list of commands --timeout stopped.
 
-    Needs capsys active so sys.stdout is the capture object whose isatty is patched.
+    Needs capsys active so sys.stdout and sys.stderr are the capture objects whose isatty is patched.
     """
     sleeps, calls = [], []
 
@@ -36,6 +38,8 @@ def _run(monkeypatch, argv, tty=False, refreshes=2, rows=ROWS, cuts=([],)):
     monkeypatch.setattr(statblk.multiCMD, "pretty_format_table", lambda r, **k: "TABLE")
     monkeypatch.setattr(statblk.time, "sleep", sleep)
     monkeypatch.setattr(statblk.sys.stdout, "isatty", lambda: tty)
+    if statblk.sys.stderr is not None:
+        monkeypatch.setattr(statblk.sys.stderr, "isatty", lambda: tty if stderr_tty is None else stderr_tty)
     monkeypatch.setattr(statblk.sys, "argv", argv)
     statblk.main()
     return sleeps, calls
@@ -191,3 +195,13 @@ def test_cut_note_under_every_redrawn_table(monkeypatch, capsys):
     # The next redraw wipes the screen, so the note goes under each table, as the missing-lsblk note does.
     _run(monkeypatch, ["statblk", "-w", "2", "-t", "0.5"], tty=True, refreshes=3, cuts=(["mount"],))
     assert capsys.readouterr().err.count("mount was stopped") == 3
+
+
+@pytest.mark.parametrize("cuts, line", [(NO_LSBLK, "lsblk not found"), ((["mount"],), "mount was stopped")],
+                         ids=["not found", "stopped"])
+def test_note_once_per_run_when_stderr_is_not_the_redrawn_terminal(monkeypatch, capsys, cuts, line):
+    # `statblk -w 2 2>>log` on a terminal: the redraw clears the screen, not the log, so the note goes there once
+    # (1.64 wrote it on every refresh).
+    _run(monkeypatch, ["statblk", "-w", "2", "-t", "0.5"], tty=True, refreshes=3, cuts=cuts, stderr_tty=False)
+    out, err = capsys.readouterr()
+    assert out.count(CLEAR) == 3 and err.count(line) == 1

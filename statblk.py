@@ -1467,6 +1467,9 @@ def main():
 	multiCMD.set_sudo(args.sudo)
 	# A terminal is redrawn in place (one write, so no flicker); piped output and JSON keep every refresh.
 	redraw = print_period > 0 and sys.stdout.isatty() and not (args.json or args.json_objects)
+	# A note is said again under each redrawn table only where the redraw wipes it, with stderr on a terminal too (taken
+	# to be that one); anywhere else (a log, a pipe) it is said once per run.
+	renote = redraw and sys.stderr is not None and sys.stderr.isatty()
 	check_status = CHECK_OK
 	told = set()  # the commands whose note was printed
 	# --check: the checked columns a command that did not answer in full (stopped by --timeout, not found or failed) can
@@ -1523,7 +1526,7 @@ def main():
 				for command, returncode in unanswered.items():
 					if command not in told:
 						print(cut_note(command, args.timeout, returncode), file=sys.stderr, flush=True)
-						if not redraw:
+						if not renote:
 							told.add(command)  # once per run, unless the next redraw wipes it
 			if print_period <= 0:
 				break
