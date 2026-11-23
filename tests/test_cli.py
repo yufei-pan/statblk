@@ -300,6 +300,17 @@ def test_check_help_says_what_a_healthy_json_check_prints():
     assert "print the rows that need attention, and exit 1 if one has a problem" in help_text
 
 
+def test_help_says_when_check_judges_nothing_and_what_starts_a_rate_over():
+    help_text = " ".join(subprocess.run(  # one line per option: no wrap inside "since-boot"
+        [sys.executable, str(ROOT / "statblk.py"), "--help"], env=dict(os.environ, COLUMNS="10000"),
+        stdout=subprocess.PIPE, universal_newlines=True, check=True,
+    ).stdout.split())
+    assert "or the filters leave no row, or no block device is listed: said on stderr" in help_text
+    # a device the table drops keeps its counter; only one /sys/class/block stops listing starts over (the epilog, and -A)
+    assert help_text.count("a device that /sys/class/block stops listing for one refresh starts over with its "
+                           "since-boot average when it returns") == 2
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="diskutil and mount in the sbin directories are macOS's")
 def test_diskutil_and_mount_are_found_under_crons_path():
     # The lookup is made when the module loads, so it needs a fresh interpreter with cron's PATH.
