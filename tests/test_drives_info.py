@@ -556,6 +556,52 @@ def test_devname_filter_matches_mapper_name(tmp_path, monkeypatch):
     assert [r[0] for r in rows[1:]] == ["pve-root"]
 
 
+# -D matches the device path and the name NAME shows: 1.65 matched only /dev/sda1 and /dev/mapper/pve-root, so an
+# anchored name (^sda1$, ^pve-root$) matched nothing. Every pattern that matched in 1.65 still matches.
+@pytest.mark.parametrize("pattern, kept", [
+    ("^sda1$", ["sda1"]),  # the kernel name, as NAME shows it (1.65: nothing)
+    ("^pve-root$", ["pve-root"]),  # the mapper name, as NAME shows it (1.65: nothing)
+    ("^dm-1$", ["pve-root"]),  # the kernel name of the device-mapper device (1.65: nothing)
+    ("^/dev/sda1$", ["sda1"]),  # the device path, as in 1.65
+    ("^/dev/mapper/pve-root$", ["pve-root"]),  # the mapper path, as in 1.65
+    ("^/dev/dm-1$", ["pve-root"]),
+    ("sda", ["sda1", "sda2"]),  # unanchored, as in 1.65
+    ("^sda", ["sda1", "sda2"]),  # 1.65: nothing
+    ("^sda1$|^pve", ["pve-root", "sda1"]),
+    ("^sda$", []),  # the disk is not listed here: a partition's name is its own
+], ids=lambda v: v if isinstance(v, str) else None)
+@pytest.mark.parametrize("full", [False, True], ids=["NAME short", "-R"])
+def test_devname_filter_matches_the_name_shown_and_the_path(tmp_path, monkeypatch, pattern, kept, full):
+    _make_dm_device(tmp_path, "dm-1", "pve-root")
+    make_sysfs_block(tmp_path, "sda1", size_sectors=1, is_partition=True)
+    make_sysfs_block(tmp_path, "sda2", size_sectors=1, is_partition=True)
+    _patch_linux_basics(monkeypatch, devices=["/dev/dm-1", "/dev/sda1", "/dev/sda2"], mounts=defaultdict(list))
+    redirect_sys_class_block(tmp_path, monkeypatch)
+    _patch_multicmd(monkeypatch, FakeCmdResult([], 0))
+    rows = statblk.get_drives_info(output="NAME", filter_patterns=[pattern], match_devname_only=True, full=full,
+                                   timeout=2)
+    assert [statblk.display_device_name(r[0], False) for r in rows[1:]] == kept
+    # -v keeps exactly the rest: a -v pattern that matches a name drops that row (1.65 kept it when only the name
+    # matched)
+    rows = statblk.get_drives_info(output="NAME", filter_patterns=[pattern], match_devname_only=True,
+                                   invert_match=True, full=full, timeout=2)
+    assert [statblk.display_device_name(r[0], False) for r in rows[1:]] == [
+        n for n in ["pve-root", "sda1", "sda2"] if n not in kept]
+
+
+def test_devname_filter_on_a_pseudo_mount_matches_its_source(monkeypatch):
+    # -P: a network or pseudo filesystem's device is its mount source, shown as it is; no part of it is a name of its
+    # own (`-D '^export$'` does not match server:/export).
+    mounts = defaultdict(list, {"server:/export": [statblk.MountEntry("/mnt/nfs", "nfs", ["rw"])]})
+    _patch_linux_basics(monkeypatch, devices=["/dev/sda1"], mounts=mounts)
+    monkeypatch.setattr(statblk, "is_block_device", lambda p: p.startswith("/dev/"))
+    _patch_multicmd(monkeypatch, FakeCmdResult([], 0))
+    for pattern, kept in (("^server:/export$", ["server:/export"]), ("^export$", []), ("^sda1$", ["sda1"])):
+        rows = statblk.get_drives_info(output="NAME", filter_patterns=[pattern], match_devname_only=True, pseudo=True,
+                                       timeout=2)
+        assert [r[0] for r in rows[1:]] == kept, pattern
+
+
 def _squashfs_mounts():
     return defaultdict(
         list,

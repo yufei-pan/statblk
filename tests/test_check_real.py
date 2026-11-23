@@ -587,6 +587,18 @@ def test_linux_check_that_judges_something_is_as_before(monkeypatch, capsys, tmp
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run) == expected
 
 
+@pytest.mark.parametrize("argv, expected", [
+    (["-D", "^sdb$"], (1, ["sdb"], "T\n", "")),  # the disk by the name NAME shows (1.65: no row, exit 3)
+    (["-D", "^sdb"], (1, ["sdb", "sdb1"], "T\n", "")),  # the disk and its partition (1.65: no row, exit 3)
+    (["-D", "^/dev/sdb$"], (1, ["sdb"], "T\n", "")),  # the path, as in 1.65
+    (["-D", "-v", "^sdb"], (0, [], "", "")),  # sda and sda1 are judged (1.65 kept sdb too, since no path starts so)
+    (["-D", "-v", "^sd"], (3, [], "", _no_row("-v, a -D pattern"))),  # 1.65 kept every row and exited 1
+], ids=["-D ^sdb$", "-D ^sdb", "-D path", "-D -v ^sdb", "-D -v ^sd"])
+def test_linux_check_devname_pattern_matches_the_name_shown(monkeypatch, capsys, tmp_path, argv, expected):
+    run = _linux(monkeypatch, tmp_path, "/dev/sdb")  # sdb fails its SMART
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run) == expected
+
+
 @pytest.mark.parametrize("failing, expected", [
     ("/dev/sdb", (1, ["sdb1"], "T\n", "")),
     ("/dev/none", (0, [], "", "")),
@@ -679,6 +691,14 @@ def test_check_that_can_judge_nothing_names_a_command_that_did_not_answer(monkey
 def test_mac_check_with_no_pattern_to_invert_could_not_tell(monkeypatch, capsys):
     run = _mac(monkeypatch, "/dev/disk0")
     assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-v"], run) == (3, [], "", _no_row("-v"))
+
+
+@pytest.mark.parametrize("pattern, names", [("^disk0$", ["disk0"]), ("^/dev/disk0$", ["disk0"]), ("^disk0", DISK0)],
+                         ids=["name", "path", "disk and slices"])
+def test_mac_check_devname_pattern_matches_the_name_shown(monkeypatch, capsys, pattern, names):
+    # macOS names are /dev/diskN, shown as diskN: 1.65 matched only the path, so `-D '^disk0$'` left no row (exit 3).
+    run = _mac(monkeypatch, "/dev/disk0")
+    assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-D", pattern], run) == (1, names, "T\n", "")
 
 
 def test_mac_check_with_a_pattern_that_matches_nothing_could_not_tell(monkeypatch, capsys):
