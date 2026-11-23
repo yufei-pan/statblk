@@ -258,10 +258,10 @@ u4Kk3YE[)Td</U:UQ%Bo#8Z&KR`2,<*Q'IGY>IcifYK;OCZmA[['6WS/nXTK-OXY1KtZ>Eo5FJ(=02-;
 no/l]4BNXT&!]Z]Del"hJENfkBW*G_XM]"h]>k#e8FYP.(LLmF,^u1['#N.ZF^u$n///$_)-n##'''
 	exec(zlib.decompress(base64.a85decode(_SRC_B85)).decode("utf-8"), multiCMD.__dict__)
 
-version = '1.64'
+version = '1.65'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2026-11-20'
+COMMIT_DATE = '2026-11-23'
 
 # The sbin directories a non-root PATH often omits: smartmontools installs smartctl there (e.g. Debian), yet `--sudo`
 # exists exactly for non-root users who want SMART; and macOS keeps diskutil in /usr/sbin and mount in /sbin, where
