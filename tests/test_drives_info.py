@@ -679,12 +679,12 @@ STAT_RESET = "0 0 100 100 0 0 200 200 0 0 0\n"  # below STAT_BEFORE: 50 KiB read
 
 @pytest.mark.parametrize("missing_at_the_next_refresh, expected", [
     (False, ["", ""]),  # listed at the refresh after the reset: the counter went back, no rate for that interval
-    (True, ["512000", "512000"]),  # not listed at one refresh: it starts over on its return, with its average since
+    (True, ["512000", "512000"]),  # not listed at one refresh: it starts over on its return, with its since-boot average
 ], ids=["listed", "missing for a refresh"])
 def test_a_device_missing_at_a_refresh_starts_its_rate_over_on_return(monkeypatch, tmp_path, missing_at_the_next_refresh,
                                                                        expected):
     # get_drives_info() drops the throughput iterator of a device that get_blocks() leaves out, so one removed and added
-    # again while absent from a refresh gets a new one: the average since it came back (as the first query shows), not
+    # again while absent from a refresh gets a new one: its since-boot average again (as the first query shows), not
     # the blank that a counter going back gives a device that stays listed (README, READ / WRITE numbers).
     block = make_sysfs_block(tmp_path, "sda1", size_sectors=10)
     stat = block / "stat"

@@ -69,7 +69,7 @@ The first query (a single run, or the first refresh of watch mode) does **not** 
 
 The kernel counts the time of every request separately, so a device with many requests in flight at once (e.g. NVMe under load) reports more busy time than wall-clock time, and its average reads lower than its real transfer speed.
 
-From the second watch refresh on, READ / WRITE are **live rates**: bytes transferred during the last interval divided by the wall-clock time of that interval. `-J` gives the same values as bytes per second. READ / WRITE are blank (`null` in `-J`) where statblk has none to read: on macOS, for a device whose `stat` cannot be read, and for one refresh after a counter went back between two refreshes that both list the device (it was removed and added again under its name in between, or the counter wrapped). A device that one refresh leaves out starts over when it returns: it shows its average since it came back, as the first query does.
+From the second watch refresh on, READ / WRITE are **live rates**: bytes transferred during the last interval divided by the wall-clock time of that interval. `-J` gives the same values as bytes per second. READ / WRITE are blank (`null` in `-J`) where statblk has none to read: on macOS, for a device whose `stat` cannot be read, and for one refresh after a counter went back between two refreshes that both list the device (it was removed and added again under its name in between, or the counter wrapped). A device that one refresh leaves out starts over when it returns: it shows its since-boot average again, as the first query does.
 
 ## Options
 
@@ -174,7 +174,7 @@ Uses `diskutil` and `mount`, found in `/usr/sbin` and `/sbin` too when `PATH` la
 ## Upgrading to 1.65 from 1.64
 
 - `--check` exits 3, with a line on stderr (`Nothing was checked: ...`), when it is left nothing to judge: `-x` leaves out both `FSUSE%` and `SMART` (whatever `-o` names), or `-v` has no pattern or one that matches every cell (an empty `-v "$SKIP"`, `-v '.*'`). 1.64 exited 0 without saying that nothing was checked. `-j` and `-J` print what they print for a healthy run (`[]` for `-j` too when `-o` names no valid column).
-- In watch mode, READ or WRITE is blank (`null` in `-J`) for one refresh after the device's counter went back (the device was removed and added again under its name, or the counter wrapped), where 1.64 showed a negative rate (`-J` already gave `null`). A device that a refresh leaves out shows its average since it came back when it returns, as in 1.64.
+- In watch mode, READ or WRITE is blank (`null` in `-J`) for one refresh after the device's counter went back (the device was removed and added again under its name, or the counter wrapped), where 1.64 showed a negative rate (`-J` already gave `null`). A device that a refresh leaves out shows its since-boot average again when it returns, as in 1.64.
 - `statblk -w 2 2>>log` on a terminal writes a command's note (stopped, not found or failed) to the log once per run, where 1.64 wrote it on every refresh. With stderr on the terminal too, the note still follows each redrawn table.
 - `-o ALL` (any case) means what `-o all` does, every column that has data; 1.64 read it as an unknown column and printed an empty table.
 - The embedded multiCMD is now 1.69. Nothing statblk shows changes.
