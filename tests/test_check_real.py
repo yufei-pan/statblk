@@ -649,6 +649,15 @@ def test_linux_check_mounted_only_with_nothing_mounted_could_not_tell(monkeypatc
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-M"], run) == (1, ["sdb1"], "T\n", "")
 
 
+def test_linux_check_active_only_with_every_device_idle_could_not_tell(monkeypatch, capsys, tmp_path):
+    # Every device reads as idle (0 B/s), so -A drops every row: sdb fails its SMART and is not judged.
+    run = _linux(monkeypatch, tmp_path, "/dev/sdb")
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-A"], run) == (3, [], "", _no_row("-A"))
+    # the control: with throughput on every device, -A keeps the rows
+    monkeypatch.setattr(statblk, "get_read_write_rate_throughput_iter", lambda p: iter(lambda: (512, 0), None))
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-A"], run) == (1, ["sdb", "sdb1"], "T\n", "")
+
+
 @pytest.mark.parametrize("flag", ["-j", "-J"])
 def test_check_that_can_judge_nothing_prints_what_a_healthy_one_does(monkeypatch, capsys, tmp_path, flag):
     # JSON as for a healthy run (the header row, or []); the exit and stderr tell them apart.
