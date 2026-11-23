@@ -1392,7 +1392,7 @@ def nothing_to_check(header, invert_match, filter_patterns):
 		pattern = compile_filter_pattern(filter_patterns or [])
 		if pattern.search('') and pattern.search('a'):
 			reasons.append('-v with no pattern, or one that matches every cell (an empty "$SKIP", .*), keeps no row; '
-						   'give -v the pattern to leave out')
+				'give -v the pattern to leave out')
 	return reasons
 
 def cut_note(command, timeout, returncode=TIMEOUT_RETURNCODE):
