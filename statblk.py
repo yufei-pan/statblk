@@ -1369,6 +1369,23 @@ def check_rows(rows, max_use):
 		return reported, CHECK_PROBLEM
 	return reported, CHECK_UNKNOWN if CHECK_UNKNOWN in statuses else CHECK_OK
 
+def nothing_to_check(header, invert_match, filter_patterns):
+	"""Why --check can judge nothing in a run whose table has this header: no checked column (-x leaves out both,
+	which is also the only way to have no valid output field), or -v with no pattern, which keeps no row. Each reason
+	makes a healthy-looking run "could not tell" (3): a check of nothing is not a healthy one.
+
+	>>> nothing_to_check(['NAME', 'SMART'], False, []), nothing_to_check(['NAME', 'FSUSE%'], True, ['sda'])
+	([], [])
+	>>> nothing_to_check(['NAME', 'MOUNTPOINT'], True, [])
+	['-x leaves out both FSUSE% and SMART; leave one in', '-v with no pattern keeps no row; give -v the pattern to leave out']
+	"""
+	reasons = []
+	if not set(CHECK_FIELDS).intersection(header):
+		reasons.append("-x leaves out both FSUSE% and SMART; leave one in")
+	if invert_match and not filter_patterns:
+		reasons.append("-v with no pattern keeps no row; give -v the pattern to leave out")
+	return reasons
+
 def cut_note(command, timeout, returncode=TIMEOUT_RETURNCODE):
 	"""The stderr line for a command that did not answer in full (see CUT_WHAT), by its return code: 124 stopped by
 	--timeout (or still running at the deadline), 127 not found, any other failed.
@@ -1427,7 +1444,7 @@ def main():
 	parser.add_argument('-t','--timeout', help="Set command timeout in seconds (default: 2; 0: no limit)", default=2, type=float)
 	parser.add_argument('-w','--watch', metavar='SECONDS', type=float, default=None,
 						help="Repeat output every SECONDS (watch mode). Equivalent to a trailing integer positional.")
-	parser.add_argument('--check', help="Health check: print the rows that need attention, and exit 1 if one has a problem (SMART failing, FSUSE%% >= --max_use, hung mount), else 3 if one could not be checked (SMART unreadable, FSUSE%% ERROR) or a command that can hide what is checked did not answer in full (named on stderr); when all is healthy, print nothing (-j: the header row, -J: []) and exit 0", action="store_true")
+	parser.add_argument('--check', help="Health check: print the rows that need attention, and exit 1 if one has a problem (SMART failing, FSUSE%% >= --max_use, hung mount), else 3 if one could not be checked (SMART unreadable, FSUSE%% ERROR), if nothing could be (-x leaves out FSUSE%% and SMART, or -v has no pattern: said on stderr), or if a command that can hide what is checked did not answer in full (named on stderr); when all is healthy, print nothing (-j: the header row, -J: []) and exit 0", action="store_true")
 	parser.add_argument('--max_use', metavar='PCT', type=int, default=90, help="FSUSE%% at or above which --check reports a filesystem (default: 90)")
 	parser.add_argument('--sudo', help="Run commands as root with sudo. Needed for querying SMART info.", action="store_true")
 	parser.add_argument('--show_zero_size_devices', help="Show devices with zero size", action="store_true")
@@ -1471,6 +1488,7 @@ def main():
 	# to be that one); anywhere else (a log, a pipe) it is said once per run.
 	renote = redraw and sys.stderr is not None and sys.stderr.isatty()
 	check_status = CHECK_OK
+	nothing = []  # --check: why it could judge nothing (nothing_to_check)
 	told = set()  # the commands whose note was printed
 	# --check: the checked columns a command that did not answer in full (stopped by --timeout, not found or failed) can
 	# hide. A filter drops a row only on a value that was read (get_drives_info), so such a command hides a check only
@@ -1496,9 +1514,11 @@ def main():
 			if args.check:
 				read = results[0] if results else ()
 				results, check_status = check_rows(results, args.max_use)
+				nothing = nothing_to_check(read, args.invert_match, args.filter_patterns)
 				if check_status == CHECK_OK:
-					# A command that can hide what --check reads makes the run unknown; any other stays quiet on exit 0.
-					if any(cut_hides(command).intersection(read) for command in unanswered):
+					# A run that could judge nothing, or a command that can hide what --check reads, makes the run unknown;
+					# any other command stays quiet on exit 0.
+					if nothing or any(cut_hides(command).intersection(read) for command in unanswered):
 						check_status = CHECK_UNKNOWN
 					else:
 						unanswered = {}
@@ -1523,6 +1543,8 @@ def main():
 					table = f"{clear}{header}\n{table}"
 				print(table,flush=True)
 			if sys.stderr is not None:
+				for reason in nothing:
+					print(f"Nothing was checked: {reason}.", file=sys.stderr, flush=True)
 				for command, returncode in unanswered.items():
 					if command not in told:
 						print(cut_note(command, args.timeout, returncode), file=sys.stderr, flush=True)

@@ -3,6 +3,7 @@ the host's devices described: on macOS the test Mac's own /dev, mount and diskut
 Each case forces one outcome: what a stopped command, a failed statvfs, a filter or a size read as 0 does to the
 exit and the rows."""
 import errno
+import json
 
 import pytest
 
@@ -520,3 +521,57 @@ def test_check_cut_rule_cell(monkeypatch, capsys, tmp_path, command, columns, fl
     expected = ((3, [], "", _cut_line(command, 0.5, returncode)) if flags in _CUT_COUNTS[(command, columns)]
                 else (0, [], "", ""))
     assert _run(monkeypatch, capsys, argv, run) == expected
+
+
+# A --check that can judge nothing: no checked column (-x leaves out both FSUSE% and SMART, which is also the only way
+# to leave no valid output field), or -v with no pattern, which keeps no row. 1.64 printed nothing and exited 0, over a
+# failing disk too; it could not tell, so 3, with why on stderr.
+
+NOTHING_X = "Nothing was checked: -x leaves out both FSUSE% and SMART; leave one in.\n"
+NOTHING_V = "Nothing was checked: -v with no pattern keeps no row; give -v the pattern to leave out.\n"
+NO_VALID_FIELD = "Ignoring invalid output field: FOO.\nNo valid output fields specified.\n"
+
+
+@pytest.mark.parametrize("argv, err", [
+    (["-v"], NOTHING_V),
+    (["-D", "-v"], NOTHING_V),
+    (["-v", "0"], NOTHING_V),  # a trailing 0 is neither a pattern nor a watch
+    (["-x", "FSUSE%,SMART"], NOTHING_X),
+    (["-x", "smart, fsuse%", "-o", "NAME,SIZE"], NOTHING_X),
+    (["-x", "FSUSE%,SMART", "-o", "foo"], NO_VALID_FIELD + NOTHING_X),
+    (["-v", "-x", "FSUSE%,SMART"], NOTHING_X + NOTHING_V),
+], ids=["-v", "-D -v", "-v 0", "-x both", "-x both -o", "no valid field", "both reasons"])
+def test_linux_check_that_can_judge_nothing_could_not_tell(monkeypatch, capsys, tmp_path, argv, err):
+    run = _linux(monkeypatch, tmp_path, "/dev/sdb")  # sdb fails its SMART
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run) == (3, [], "", err)
+
+
+@pytest.mark.parametrize("argv, expected", [
+    (["-v", "sdb"], (0, [], "", "")),  # the operator's own pattern leaves the failing disk out
+    (["-x", "SMART"], (0, [], "", "")),
+    (["-x", "FSUSE%"], (1, ["sdb", "sdb1"], "T\n", "")),
+], ids=["-v pattern", "-x SMART", "-x FSUSE%"])
+def test_linux_check_that_judges_something_is_as_before(monkeypatch, capsys, tmp_path, argv, expected):
+    run = _linux(monkeypatch, tmp_path, "/dev/sdb")
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run) == expected
+
+
+@pytest.mark.parametrize("flag", ["-j", "-J"])
+def test_check_that_can_judge_nothing_prints_what_a_healthy_one_does(monkeypatch, capsys, tmp_path, flag):
+    # JSON as for a healthy run (the header row, or []); the exit and stderr tell them apart.
+    run = _linux(monkeypatch, tmp_path, "/dev/sdb")
+    code, names, out, err = _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-v", flag], run)
+    assert (code, names, err) == (3, [], NOTHING_V)
+    assert json.loads(out) == ([statblk.ALL_OUTPUT_FIELDS] if flag == "-j" else [])
+
+
+def test_check_that_can_judge_nothing_names_a_command_that_did_not_answer(monkeypatch, capsys, tmp_path):
+    # A run that exits 3 names every command that did not answer, as it does for an unknown row.
+    run = _linux(monkeypatch, tmp_path, "/dev/sdb", lsblk=([], NOT_FOUND))
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-x", "FSUSE%,SMART"], run) == (
+        3, [], "", NOTHING_X + _cut_line("lsblk", 0.5, NOT_FOUND))
+
+
+def test_mac_check_with_no_pattern_to_invert_could_not_tell(monkeypatch, capsys):
+    run = _mac(monkeypatch, "/dev/disk0")
+    assert _run(monkeypatch, capsys, ["--check", "-t", "2", "-v"], run) == (3, [], "", NOTHING_V)
