@@ -8,8 +8,8 @@ Open work lives here and nowhere else (RULES, "Long work: the progress file"). E
 ## Open work
 
 ### statblk 1.66 (no written plan: the two entries of kind "deferred (1.66)" in docs/limitations.md, each with its plan)
-- **`-D` matches the device path (`/dev/sda`), not the name the table shows,** so an anchored name like `-D '^sda$'` matches nothing (and `--check` then exits 3). Plan: match the kernel and mapper name as well. State: not started. From: the second opinion on 1.65's last re-review (2026-11-23), a deferral, not asked.
-- **A row whose `FSUSE%` and `SMART` are both blank counts as healthy** (an unmounted loop, zram or device-mapper device), so a host listing only such rows exits 0 with nothing judged. Plan: a row counts as judged only when one of its checked cells holds a value. State: not started. From: the same review (2026-11-23), a deferral, not asked.
+- **`-D` matches the device path (`/dev/sda`), not the name the table shows,** so an anchored name like `-D '^sda$'` matches nothing (and `--check` then exits 3). Plan: match the kernel and mapper name as well. State: building on feat/166 (2026-11-23). From: the second opinion on 1.65's last re-review (2026-11-23), a deferral, not asked.
+- **A row whose `FSUSE%` and `SMART` are both blank counts as healthy** (an unmounted loop, zram or device-mapper device), so a host listing only such rows exits 0 with nothing judged. Plan: a row counts as judged only when one of its checked cells holds a value. State: building on feat/166 (2026-11-23). From: the same review (2026-11-23), a deferral, not asked.
 
 ### Standing rows
 - **Deferred work** is in `docs/limitations.md` (entries of kind "deferred"); each names when it is revisited.
