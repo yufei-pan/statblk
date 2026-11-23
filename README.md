@@ -173,7 +173,7 @@ Uses `diskutil` and `mount`, found in `/usr/sbin` and `/sbin` too when `PATH` la
 
 ## Upgrading to 1.65 from 1.64
 
-- `--check` exits 3, with a line on stderr (`Nothing was checked: ...`), when it is left nothing to judge: `-x` leaves out both `FSUSE%` and `SMART` (or no valid `-o` column is left), or `-v` has no pattern. 1.64 printed nothing and exited 0. `-j` and `-J` print what they print for a healthy run.
+- `--check` exits 3, with a line on stderr (`Nothing was checked: ...`), when it is left nothing to judge: `-x` leaves out both `FSUSE%` and `SMART` (whatever `-o` names), or `-v` has no pattern. 1.64 exited 0 and did not say so. `-j` and `-J` print what they print for a healthy run.
 - In watch mode, READ or WRITE is blank (`null` in `-J`) for one refresh after the device's counter went back (the device was removed and added again under its name, or the counter wrapped), where 1.64 showed a negative rate.
 - `statblk -w 2 2>>log` on a terminal writes a command's note (stopped, not found or failed) to the log once per run, where 1.64 wrote it on every refresh. With stderr on the terminal too, the note still follows each redrawn table.
 - `-o ALL` (any case) means every column, as `-o all` does; 1.64 read it as an unknown column and printed an empty table.
