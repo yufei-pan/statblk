@@ -128,6 +128,8 @@ def test_max_use_threshold(monkeypatch):
     (["statblk", "--check", "-o", "NAME,smart"], "NAME,smart,FSUSE%"),
     (["statblk", "--check", "-o", "NAME", "-x", "SMART"], "NAME,FSUSE%"),
     (["statblk", "-o", "NAME"], "NAME"),  # no --check: untouched
+    (["statblk", "--check", "-o", "ALL"], "all"),  # "all" in any case (1.64: an unknown column ALL)
+    (["statblk", "-o", " All "], "all"),
 ])
 def test_check_adds_check_columns(monkeypatch, argv, output):
     _, seen, _ = _run_main(monkeypatch, argv)

@@ -1461,6 +1461,9 @@ def main():
 	except ImportError:
 		pass
 	args = parser.parse_args()
+	# -o takes "all" in any case, as it takes the column names (1.64 read "ALL" as an unknown column).
+	if args.output.strip().lower() == "all":
+		args.output = "all"
 	tptDict = {}
 	# Prefer explicit -w/--watch; otherwise peel a trailing integer from positionals
 	# (historical: `statblk sda 5` / `statblk 5`).
