@@ -69,7 +69,7 @@ The first query (a single run, or the first refresh of watch mode) does **not** 
 
 The kernel counts the time of every request separately, so a device with many requests in flight at once (e.g. NVMe under load) reports more busy time than wall-clock time, and its average reads lower than its real transfer speed.
 
-From the second watch refresh on, READ / WRITE are **live rates**: bytes transferred during the last interval divided by the wall-clock time of that interval. `-J` gives the same values as bytes per second. READ / WRITE are blank (`null` in `-J`) where statblk has none to read: on macOS, and for a device whose `stat` cannot be read.
+From the second watch refresh on, READ / WRITE are **live rates**: bytes transferred during the last interval divided by the wall-clock time of that interval. `-J` gives the same values as bytes per second. READ / WRITE are blank (`null` in `-J`) where statblk has none to read: on macOS, for a device whose `stat` cannot be read, and for one refresh after a counter went back (the device was removed and added again under its name, or the counter wrapped).
 
 ## Options
 

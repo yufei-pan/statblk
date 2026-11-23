@@ -832,7 +832,8 @@ def get_read_write_rate_throughput_iter(sysfs_block_path):
 	That gives an immediate non-zero estimate without waiting for a poll interval.
 
 	Later samples are interval rates: delta bytes / wall-clock elapsed since the
-	previous sample read (used by watch mode after the first refresh).
+	previous sample read (used by watch mode after the first refresh). A counter below
+	the previous sample's was reset in between (see _interval_rate): None for that interval.
 	"""
 	if IS_DARWIN or not sysfs_block_path or not os.path.isdir(sysfs_block_path):
 		while True:
@@ -853,14 +854,25 @@ def get_read_write_rate_throughput_iter(sysfs_block_path):
 			yield None, None
 			continue
 		if previous is None:
-			read_throughput = bytes_read / read_time if read_time > 0 else 0
-			write_throughput = bytes_written / write_time if write_time > 0 else 0
+			read_throughput = int(bytes_read / read_time) if read_time > 0 else 0
+			write_throughput = int(bytes_written / write_time) if write_time > 0 else 0
 		else:
 			elapsed_time = now - previous[0]
-			read_throughput = (bytes_read - previous[1]) / elapsed_time if elapsed_time > 0 else 0
-			write_throughput = (bytes_written - previous[2]) / elapsed_time if elapsed_time > 0 else 0
+			read_throughput = _interval_rate(bytes_read - previous[1], elapsed_time)
+			write_throughput = _interval_rate(bytes_written - previous[2], elapsed_time)
 		previous = (now, bytes_read, bytes_written)
-		yield int(read_throughput), int(write_throughput)
+		yield read_throughput, write_throughput
+
+def _interval_rate(delta_bytes, elapsed_time):
+	"""Bytes per second over one interval, or None when the counter went back: it was reset in between (the device
+	removed and added again under its name, a counter that wrapped), so what the interval moved is not known.
+
+	>>> _interval_rate(2048, 2.0), _interval_rate(0, 2.0), _interval_rate(-512, 2.0)
+	(1024, 0, None)
+	"""
+	if delta_bytes < 0:
+		return None
+	return int(delta_bytes / elapsed_time) if elapsed_time > 0 else 0
 
 def natural_sort_key(text):
 	"""Sort key that orders embedded numbers numerically.

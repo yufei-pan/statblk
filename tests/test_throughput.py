@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 import statblk
 from fakes import make_sysfs_block
 
@@ -85,3 +87,25 @@ def test_rate_after_a_sample_that_was_not_read_counts_from_the_last_one_read(tmp
     assert next(it) == (2000 * 512, 4000 * 512 // 2)
     stat.write_text("0 0 6000 1000 0 0 4000 2000 0 0 0\n")  # 2 s later: 4000 sectors more read
     assert next(it) == (4000 * 512 // 2, 0)
+
+
+@pytest.mark.parametrize("read_after, written_after, expected", [
+    (1000, 4000 + 2000, (None, 2000 * 512 // 2)),  # the read counter was reset (it wrapped): READ blank, WRITE live
+    (1000, 1000, (None, None)),  # both reset: the device was removed and added again under its name
+], ids=["read wrapped", "device re-added"])
+def test_counter_reset_between_samples_has_no_rate_for_that_interval(tmp_path, monkeypatch, read_after,
+                                                                       written_after, expected):
+    # A counter below the last sample's was reset in between: what the interval moved is not known, so that
+    # direction's rate is None (blank, null in -J), not negative as in 1.64; the next interval counts from the reset.
+    block = make_sysfs_block(tmp_path, "sda", size_sectors=10)
+    stat = block / "stat"
+    clock = iter([100.0, 102.0, 104.0])
+    monkeypatch.setattr(statblk, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+    monkeypatch.setattr(statblk, "IS_DARWIN", False)
+    it = statblk.get_read_write_rate_throughput_iter(str(block))
+    stat.write_text("0 0 2000 1000 0 0 4000 2000 0 0 0\n")
+    assert next(it) == (2000 * 512, 4000 * 512 // 2)  # the since-boot average
+    stat.write_text("0 0 %d 1000 0 0 %d 2000 0 0 0\n" % (read_after, written_after))
+    assert next(it) == expected
+    stat.write_text("0 0 %d 1000 0 0 %d 2000 0 0 0\n" % (read_after + 400, written_after + 800))
+    assert next(it) == (400 * 512 // 2, 800 * 512 // 2)
