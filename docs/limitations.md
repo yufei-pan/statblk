@@ -20,3 +20,9 @@ Approved known limitations and deferrals. Reviewers: read this first, and don't 
 - Why: the zero-size rule keeps an empty slot from showing as a disk, and `--check` judges the rows the table shows. Reproduced with fake commands only, not on a real disk; 1.62 and 1.61 did the same.
 - Revisit when: someone sees it on a real disk, or measures what smartctl answers for one.
 - Approved: 2026-11-16, chief's decision C78 (the user's desk session; not the user's words): option (1), a known limitation with one README line.
+
+### `--check` on a host that lists no block device exits 0
+- Kind: deferred (1.66)
+- What the operator sees: `statblk --check` on a host where no block device is listed (`/sys/class/block` empty or not readable, or a host with only non-block mounts) prints nothing and exits 0, though nothing was judged. 1.64 and 1.65 do the same.
+- Why: `get_blocks()` swallows a failed listing of `/sys/class/block`, and `check_rows()` calls a table with no rows healthy. Plan for 1.66: a failed listing counts as a source that could not be read (exit 3 when nothing else is wrong, as a failed command does since 1.62), and a run with no filter that lists no device says "Nothing was checked" and exits 3. A filter that leaves no row on a host that does list devices stays the operator's own question (exit 0).
+- Revisit when: 1.66.
