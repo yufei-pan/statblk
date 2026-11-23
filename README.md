@@ -24,7 +24,7 @@ Optional shell tab completion:
 pip install 'statblk[completion]'
 ```
 
-Requires **Python 3.6+**. statblk carries a copy of [multiCMD](https://pypi.org/project/multiCMD/) (1.69): an installed multiCMD is used when it is at least as new, the copy otherwise.
+Requires **Python 3.6+**. statblk carries a copy of [multiCMD](https://pypi.org/project/multiCMD/) (1.70): an installed multiCMD is used when it is at least as new, the copy otherwise.
 
 ## Quick start
 
@@ -177,7 +177,7 @@ Uses `diskutil` and `mount`, found in `/usr/sbin` and `/sbin` too when `PATH` la
 - In watch mode, READ or WRITE is blank (`null` in `-J`) for one refresh after the device's counter went back (the device was removed and added again under its name, or the counter wrapped), where 1.64 showed a negative rate (`-J` already gave `null`). A device that `/sys/class/block` stops listing for one refresh shows its since-boot average again when it returns, as in 1.64.
 - `statblk -w 2 2>>log` on a terminal writes a command's note (stopped, not found or failed) to the log once per run, where 1.64 wrote it on every refresh. With stderr on the terminal too, the note still follows each redrawn table.
 - `-o ALL` (any case) is read as `-o all`; 1.64 read it as an unknown column and printed an empty table.
-- The embedded multiCMD is now 1.69. Nothing statblk shows changes.
+- The embedded multiCMD is now 1.70. Nothing statblk shows changes.
 - Library callers: `get_read_write_rate_throughput_iter()` yields None for a direction whose counter went back.
 
 ## Upgrading to 1.64 from 1.63
