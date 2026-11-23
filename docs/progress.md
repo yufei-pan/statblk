@@ -8,8 +8,8 @@ Open work lives here and nowhere else (RULES, "Long work: the progress file"). E
 ## Open work
 
 ### statblk 1.65 (no written plan yet: the entries of kind "deferred (1.65)" in docs/limitations.md, written in 1.64's fix round 1; next, after 1.64's release on 2026-11-21)
-- **The 1.64 reviews' deferrals,** each with its plan in docs/limitations.md: `--check -v` with no pattern judges nothing (exit 3); `--check` with no valid output field judges nothing (exit 3); `-w` with stderr redirected and stdout a terminal repeats the note each refresh (once per run when stderr is not that terminal); a counter reset between refreshes shows a negative READ or WRITE rate (blank for that refresh). State: not started. From: 1.64's final review and second opinions (2026-11-20), deferrals, not asked.
-- **The embedded multiCMD 1.69** (released 2026-11-21, tag v1.69). State: not started. From: multiCMD's standing row (each tool takes a new embed in its next version).
+- **The 1.64 reviews' deferrals,** each with its plan in docs/limitations.md: `--check -v` with no pattern judges nothing (exit 3); `--check` with no valid output field judges nothing (exit 3); `-w` with stderr redirected and stdout a terminal repeats the note each refresh (once per run when stderr is not that terminal); a counter reset between refreshes shows a negative READ or WRITE rate (blank for that refresh). State: building on feat/165 (2026-11-23). From: 1.64's final review and second opinions (2026-11-20), deferrals, not asked.
+- **The embedded multiCMD 1.69** (released 2026-11-21, tag v1.69). State: building on feat/165; v1.70 instead if it is released before the review. From: multiCMD's standing row (each tool takes a new embed in its next version).
 
 ### Standing rows
 - **Deferred work** is in `docs/limitations.md` (entries of kind "deferred"); each names when it is revisited.
