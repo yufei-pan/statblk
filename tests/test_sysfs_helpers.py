@@ -66,9 +66,9 @@ def test_get_partition_parent_name_disk_vs_partition(tmp_path, monkeypatch):
 
 
 def _make_sysfs_host(tmp_path):
-    """A fake /sys/class/block as the kernel lays it out: the hardware disk sda (a `device` link) with partitions sda1 and
-    sda2, and the virtual loop0 (no `device` link) with loop0p1; a partition's class entry links to a directory nested
-    under its disk's, which is where the real get_partition_parent_name() reads the disk from."""
+    """A fake /sys/class/block: the disk sda (with a `device` link) with partitions sda1 and sda2, and loop0 (no `device`
+    link) with loop0p1. A partition's class entry links to a directory under its disk's name, which is where the real
+    get_partition_parent_name() reads the disk from."""
     class_block = tmp_path / "sys" / "class" / "block"
     for disk, with_device, parts in (("sda", True, ("sda1", "sda2")), ("loop0", False, ("loop0p1",))):
         make_sysfs_block(tmp_path, disk, size_sectors=100, with_device=with_device)
@@ -92,11 +92,13 @@ def test_has_sysfs_device_and_the_parent_of_a_partition_with_no_dev_node(tmp_pat
     assert statblk.get_partition_parent_name("/dev/sda") is None  # a whole disk's own node is not there
 
 
-@pytest.mark.parametrize("nodes, expected", [
-    ((), {"sda": "UNKNOWN", "sda1": "UNKNOWN", "sda2": "UNKNOWN", "loop0": "", "loop0p1": ""}),
-    (("/dev/sda",), {"sda": "OK", "sda1": "OK", "sda2": "OK", "loop0": "", "loop0p1": ""}),
-], ids=["no node", "the disk's node"])
-def test_smart_of_a_partition_with_no_dev_node_follows_its_disk_through_sysfs(tmp_path, monkeypatch, nodes, expected):
+@pytest.mark.parametrize("nodes, smartctl, expected", [
+    ((), "/usr/sbin/smartctl", {"sda": "UNKNOWN", "sda1": "UNKNOWN", "sda2": "UNKNOWN", "loop0": "", "loop0p1": ""}),
+    (("/dev/sda",), "/usr/sbin/smartctl", {"sda": "OK", "sda1": "OK", "sda2": "OK", "loop0": "", "loop0p1": ""}),
+    (("/dev/sda",), None, {"sda": "NO SMARTCTL", "sda1": "NO SMARTCTL", "sda2": "NO SMARTCTL", "loop0": "", "loop0p1": ""}),
+], ids=["no node", "the disk's node", "the disk's node, no smartctl"])
+def test_smart_of_a_partition_with_no_dev_node_follows_its_disk_through_sysfs(tmp_path, monkeypatch, nodes, smartctl,
+                                                                             expected):
     # The real has_sysfs_device() and get_partition_parent_name() on a fake sysfs tree: a partition that no longer traced
     # to its disk would read blank (a partition has no `device` link), which --check counts as healthy.
     _make_sysfs_host(tmp_path)
@@ -104,7 +106,7 @@ def test_smart_of_a_partition_with_no_dev_node_follows_its_disk_through_sysfs(tm
     _patch_linux_basics(monkeypatch, devices=devices, mounts=defaultdict(list))
     monkeypatch.setattr(statblk, "get_partition_parent_name", REAL_GET_PARTITION_PARENT_NAME)
     monkeypatch.setattr(statblk, "is_block_device", lambda p: p in nodes)
-    monkeypatch.setattr(statblk, "SMARTCTL_PATH", "/usr/sbin/smartctl")
+    monkeypatch.setattr(statblk, "SMARTCTL_PATH", smartctl)
     redirect_sys_class_block(tmp_path, monkeypatch)
     _patch_multicmd(monkeypatch, FakeCmdResult(["SMART Health Status: OK"]))
     rows = statblk.get_drives_info(output="NAME,SMART", timeout=2)
