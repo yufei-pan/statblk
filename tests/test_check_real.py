@@ -807,9 +807,11 @@ SDA1_MOUNTED = "102 99 8:1 / /mnt/data rw,relatime - ext4 /dev/sda1 rw\n"
 
 
 def _no_dev_nodes(monkeypatch, tmp_path, mountinfo=""):
-    """_virtual's host with disks seen from a container: sysfs lists sda, sdb and their partitions, /dev has no node."""
+    """_virtual's host seen from a container: sysfs lists every device (a `device` link on the whole disks sda and sdb
+    only, as on a real host), /dev has no node for any of them."""
     run = _virtual(monkeypatch, tmp_path, disks=True, mountinfo=mountinfo, smart="SMART Health Status: OK")
-    monkeypatch.setattr(statblk, "is_block_device", lambda p: not os.path.basename(p).startswith("sd"))
+    monkeypatch.setattr(statblk, "is_block_device", lambda p: False)
+    monkeypatch.setattr(statblk, "has_sysfs_device", lambda disk: os.path.basename(disk) in ("sda", "sdb"))
     monkeypatch.setattr(statblk, "sysfs_disk_name", lambda p: os.path.basename(p).rstrip("0123456789"))
     return run
 
