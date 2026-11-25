@@ -174,7 +174,7 @@ Uses `diskutil` and `mount`, found in `/usr/sbin` and `/sbin` too when `PATH` la
 ## Upgrading to 1.67 from 1.66
 
 - A spun-down SCSI/SAS disk reads `STANDBY` in `SMART`, and counts as healthy in `--check`, for each low-power answer smartctl gives under `-n standby` (`STANDBY BY TIMER`, `STANDBY BY COMMAND`, `STANDBY_Y BY TIMER`, `STANDBY_Y BY COMMAND`, `LOW POWER`). 1.66 showed `UNKNOWN`, so `--check` exited 3.
-- A hardware disk that `/sys` lists but that has no `/dev` node here (a container that sees the host's `/sys` but none of its device nodes, Docker's default) reads `UNKNOWN` in `SMART`, so `--check` lists it and exits 3. 1.66 left it blank, which counted as healthy: with `-P`, or a bind mount that gave a disk an `FSUSE%` row, the run exited 0 though no disk's SMART was read. A container that checks only its own space runs `statblk --check -x SMART` (with `-P` for its overlay root).
+- A hardware disk that `/sys` lists but that has no `/dev` node here (a container that sees the host's `/sys` but none of its device nodes, Docker's default) reads `UNKNOWN` in `SMART`, as do its partitions, so `--check` lists them and exits 3. 1.66 left them blank, which counted as healthy: with `-P`, or a bind mount that gave a disk an `FSUSE%` row, the run exited 0 though no disk's SMART was read. A container that checks only its own space runs `statblk --check -x SMART` (with `-P` for its overlay root); one given a disk's node (`--device /dev/sda`) reads that disk's SMART, for its partitions too.
 
 ## Upgrading to 1.66 from 1.65
 
