@@ -801,3 +801,32 @@ def test_mac_check_devname_pattern_matches_the_name_shown(monkeypatch, capsys, p
 def test_mac_check_with_a_pattern_that_matches_nothing_could_not_tell(monkeypatch, capsys):
     run = _mac(monkeypatch, "/dev/disk0")
     assert _run(monkeypatch, capsys, ["--check", "-t", "2", "sda"], run) == (3, [], "", _no_row("a pattern"))
+
+
+SDA1_MOUNTED = "102 99 8:1 / /mnt/data rw,relatime - ext4 /dev/sda1 rw\n"
+
+
+def _no_dev_nodes(monkeypatch, tmp_path, mountinfo=""):
+    """_virtual's host with disks seen from a container: sysfs lists sda, sdb and their partitions, /dev has no node."""
+    run = _virtual(monkeypatch, tmp_path, disks=True, mountinfo=mountinfo, smart="SMART Health Status: OK")
+    monkeypatch.setattr(statblk, "is_block_device", lambda p: not os.path.basename(p).startswith("sd"))
+    monkeypatch.setattr(statblk, "sysfs_disk_name", lambda p: os.path.basename(p).rstrip("0123456789"))
+    return run
+
+
+@pytest.mark.parametrize("argv", [[], ["-P"]], ids=["plain", "-P"])
+def test_linux_check_of_disks_with_no_dev_node_could_not_tell(monkeypatch, capsys, tmp_path, argv):
+    # 1.66 left their SMART blank, which counts as healthy: exit 0 with a mount's FSUSE% beside them, though no disk's
+    # SMART was read
+    run = _no_dev_nodes(monkeypatch, tmp_path, mountinfo=SDA1_MOUNTED)
+    code, names, out, err = _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run)
+    assert (code, names) == (3, ["sda", "sda1", "sdb", "sdb1"])
+
+
+def test_linux_check_of_disks_with_no_dev_node_space_only(monkeypatch, capsys, tmp_path):
+    # -x SMART, the space-only check, judges the mount as before; virtual devices stay blank
+    run = _no_dev_nodes(monkeypatch, tmp_path, mountinfo=SDA1_MOUNTED)
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-x", "SMART"], run) == (0, [], "", "")
+    rows = statblk.get_drives_info(output="NAME,SMART")
+    assert dict((r[0], r[1]) for r in rows[1:]) == {**{name: "" for name in VIRTUAL_NAMES},
+                                                      "sda": "UNKNOWN", "sda1": "UNKNOWN", "sdb": "UNKNOWN", "sdb1": "UNKNOWN"}
