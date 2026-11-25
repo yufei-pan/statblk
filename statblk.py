@@ -259,7 +259,7 @@ Hl;gbiTI8o5D5Z4A,e4Oo1eTO3VRHO*Y;b,P#0]1$`&tE].&i0#sSq\f3m!L'S>Nm"MVl7L'hg,;[qaK
 K!8>YM<.Gl+aB]g5`V2VPBifYVHa,f%+Uq&+h-`SKf.?VJ24gBhH2a;a8hS>1gYeq#:Gdp6uc'''
 	exec(zlib.decompress(base64.a85decode(_SRC_B85)).decode("utf-8"), multiCMD.__dict__)
 
-version = '1.66'
+version = '1.67'
 VERSION = version
 __version__ = version
 COMMIT_DATE = '2026-11-23'
@@ -949,9 +949,12 @@ def find_stuck_smartctl(older_than, proc='/proc'):
 			continue  # gone or unreadable: not ours to report
 	return stuck
 
-# What `smartctl -n standby` prints when it skips a spun-down drive (SLEEP,
-# STANDBY, or variants like STANDBY_Y) instead of waking it.
-SMART_STANDBY_RE = re.compile(r'device is in (sleep|standby)\w* mode')
+# What `smartctl -n standby` prints when it skips a spun-down drive instead of
+# waking it: `Device is in <mode> mode, exit(2)`, where <mode> is SLEEP, STANDBY
+# or STANDBY_Y (ATA), or for SCSI/SAS also LOW POWER, STANDBY BY TIMER, STANDBY
+# BY COMMAND, STANDBY_Y BY TIMER or STANDBY_Y BY COMMAND (smartctl 7.5,
+# scsiprint.cpp). IDLE modes are still spinning and are checked as usual.
+SMART_STANDBY_RE = re.compile(r'device is in (sleep|standby|low power)[\w ]* mode')
 
 def parse_smart_health(lines):
 	"""Extract the health verdict from `smartctl -n standby -H` output.
@@ -965,6 +968,8 @@ def parse_smart_health(lines):
 	>>> parse_smart_health(['/dev/sda: Unable to detect device type'])
 	''
 	>>> parse_smart_health(['Device is in STANDBY mode, exit(2)'])
+	'STANDBY'
+	>>> parse_smart_health(['Device is in STANDBY BY TIMER mode, exit(2)'])
 	'STANDBY'
 	"""
 	for line in lines:

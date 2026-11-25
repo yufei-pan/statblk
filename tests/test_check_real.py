@@ -689,9 +689,14 @@ def test_linux_check_of_disks_beside_virtual_devices(monkeypatch, capsys, tmp_pa
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run) == expected
 
 
-def test_linux_check_of_a_disk_in_standby_judged_it(monkeypatch, capsys, tmp_path):
+@pytest.mark.parametrize("smart", [
+    "Device is in STANDBY mode, exit(2)",
+    "Device is in STANDBY BY TIMER mode, exit(2)",  # a spun-down SAS disk (1.66: UNKNOWN, exit 3)
+    "Device is in LOW POWER mode, exit(2)",
+], ids=["ATA", "SAS standby by timer", "SAS low power"])
+def test_linux_check_of_a_disk_in_standby_judged_it(monkeypatch, capsys, tmp_path, smart):
     # STANDBY is smartctl's answer (the disk is spun down, checked when next awake): a value, so the run is healthy.
-    run = _virtual(monkeypatch, tmp_path, disks=True, smart="Device is in STANDBY mode, exit(2)")
+    run = _virtual(monkeypatch, tmp_path, disks=True, smart=smart)
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"], run) == (0, [], "", "")
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-x", "SMART"], run) == (3, [], "", _no_value("FSUSE%"))
 

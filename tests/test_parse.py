@@ -68,10 +68,22 @@ def test_build_symlink_dict_decodes_udev_escapes(tmp_path):
     "Device is in STANDBY mode, exit(2)",
     "Device is in SLEEP mode, exit(2)",
     "Device is in STANDBY_Y mode, exit(2)",
+    # SCSI/SAS: each low-power name smartctl 7.5 prints under -n standby (scsiprint.cpp, the 5Eh sense codes)
+    "Device is in LOW POWER mode, exit(2)",
+    "Device is in STANDBY BY TIMER mode, exit(2)",
+    "Device is in STANDBY BY COMMAND mode, exit(2)",
+    "Device is in STANDBY_Y BY TIMER mode, exit(2)",
+    "Device is in STANDBY_Y BY COMMAND mode, exit(2)",
 ])
 def test_parse_smart_health_standby(line):
     # smartctl -n standby skips a spun-down drive instead of waking it.
     assert statblk.parse_smart_health(["smartctl 7.5 2025-04-30 r5714", line]) == "STANDBY"
+
+
+@pytest.mark.parametrize("mode", ["IDLE BY TIMER", "IDLE BY COMMAND", "IDLE_ BY COMMAND", "IDLE_C BY TIMER", "IDLE_C BY COMMAND"])
+def test_parse_smart_health_scsi_idle_is_not_standby(mode):
+    # SCSI idle modes (printed only under -n idle) are still spinning: not STANDBY.
+    assert statblk.parse_smart_health(["Device is in %s mode, exit(2)" % mode]) == ""
 
 
 def test_parse_smart_health_idle_is_not_standby():
