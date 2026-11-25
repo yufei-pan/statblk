@@ -689,9 +689,14 @@ def test_linux_check_of_disks_beside_virtual_devices(monkeypatch, capsys, tmp_pa
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run) == expected
 
 
-def test_linux_check_of_a_disk_in_standby_judged_it(monkeypatch, capsys, tmp_path):
+@pytest.mark.parametrize("smart", [
+    "Device is in STANDBY mode, exit(2)",
+    "Device is in STANDBY BY TIMER mode, exit(2)",  # a spun-down SAS disk (1.66: UNKNOWN, exit 3)
+    "Device is in LOW POWER mode, exit(2)",
+], ids=["ATA", "SAS standby by timer", "SAS low power"])
+def test_linux_check_of_a_disk_in_standby_judged_it(monkeypatch, capsys, tmp_path, smart):
     # STANDBY is smartctl's answer (the disk is spun down, checked when next awake): a value, so the run is healthy.
-    run = _virtual(monkeypatch, tmp_path, disks=True, smart="Device is in STANDBY mode, exit(2)")
+    run = _virtual(monkeypatch, tmp_path, disks=True, smart=smart)
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"], run) == (0, [], "", "")
     assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-x", "SMART"], run) == (3, [], "", _no_value("FSUSE%"))
 
@@ -796,3 +801,63 @@ def test_mac_check_devname_pattern_matches_the_name_shown(monkeypatch, capsys, p
 def test_mac_check_with_a_pattern_that_matches_nothing_could_not_tell(monkeypatch, capsys):
     run = _mac(monkeypatch, "/dev/disk0")
     assert _run(monkeypatch, capsys, ["--check", "-t", "2", "sda"], run) == (3, [], "", _no_row("a pattern"))
+
+
+SDA1_MOUNTED = "102 99 8:1 / /mnt/data rw,relatime - ext4 /dev/sda1 rw\n"
+
+
+def _no_dev_nodes(monkeypatch, tmp_path, mountinfo="", nodes=(), failing=None):
+    """_virtual's host seen from a container: sysfs lists every device (a `device` link on the whole disks sda and sdb
+    only, as on a real host), /dev has a node only for `nodes` (none by default). A disk's smartctl answers OK, or
+    FAILED for `failing` (a device path)."""
+    run = _virtual(monkeypatch, tmp_path, failing or "/dev/none", disks=True, mountinfo=mountinfo,
+                   smart=None if failing else "SMART Health Status: OK")
+    monkeypatch.setattr(statblk, "is_block_device", lambda p: p in nodes)
+    monkeypatch.setattr(statblk, "has_sysfs_device", lambda disk: os.path.basename(disk) in ("sda", "sdb"))
+    return run
+
+
+@pytest.mark.parametrize("argv", [[], ["-P"]], ids=["plain", "-P"])
+def test_linux_check_of_disks_with_no_dev_node_could_not_tell(monkeypatch, capsys, tmp_path, argv):
+    # 1.66 left their SMART blank, which counts as healthy: exit 0 with a mount's FSUSE% beside them, though no disk's
+    # SMART was read
+    run = _no_dev_nodes(monkeypatch, tmp_path, mountinfo=SDA1_MOUNTED)
+    code, names, out, err = _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run)
+    assert (code, names) == (3, ["sda", "sda1", "sdb", "sdb1"])
+
+
+def test_linux_check_of_disks_with_no_dev_node_space_only(monkeypatch, capsys, tmp_path):
+    # -x SMART, the space-only check, judges the mount as before; virtual devices stay blank
+    run = _no_dev_nodes(monkeypatch, tmp_path, mountinfo=SDA1_MOUNTED)
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5", "-x", "SMART"], run) == (0, [], "", "")
+    rows = statblk.get_drives_info(output="NAME,SMART")
+    assert dict((r[0], r[1]) for r in rows[1:]) == {**{name: "" for name in VIRTUAL_NAMES},
+                                                      "sda": "UNKNOWN", "sda1": "UNKNOWN", "sdb": "UNKNOWN", "sdb1": "UNKNOWN"}
+
+
+# A partition has no SMART of its own: it reads its disk's. A container given a disk's node (`docker run --device
+# /dev/sda`) but not its partitions' reads the disk's SMART for them too (the 1.67 build said UNKNOWN, exit 3).
+DISK_NODES = ("/dev/sda", "/dev/sdb")
+
+
+@pytest.mark.parametrize("argv", [[], ["-P"]], ids=["plain", "-P"])
+def test_linux_check_of_disks_given_their_nodes_but_not_their_partitions_judges_them(monkeypatch, capsys, tmp_path, argv):
+    run = _no_dev_nodes(monkeypatch, tmp_path, mountinfo=SDA1_MOUNTED, nodes=DISK_NODES)
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run) == (0, [], "", "")
+    rows = statblk.get_drives_info(output="NAME,SMART")
+    assert dict((r[0], r[1]) for r in rows[1:]) == {**{name: "" for name in VIRTUAL_NAMES},
+                                                      "sda": "OK", "sda1": "OK", "sdb": "OK", "sdb1": "OK"}
+
+
+def test_linux_check_of_a_failing_disk_given_its_node_lists_its_partitions_too(monkeypatch, capsys, tmp_path):
+    run = _no_dev_nodes(monkeypatch, tmp_path, nodes=DISK_NODES, failing="/dev/sdb")
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"], run) == (1, ["sdb", "sdb1"], "T\n", "")
+
+
+def test_linux_check_of_one_disk_given_its_node_and_the_other_not(monkeypatch, capsys, tmp_path):
+    # sda's node is here, sdb's is not: sda and sda1 are read, sdb and sdb1 could not be (UNKNOWN, exit 3)
+    run = _no_dev_nodes(monkeypatch, tmp_path, nodes=("/dev/sda",))
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"], run) == (3, ["sdb", "sdb1"], "T\n", "")
+    rows = statblk.get_drives_info(output="NAME,SMART")
+    assert dict((r[0], r[1]) for r in rows[1:]) == {**{name: "" for name in VIRTUAL_NAMES},
+                                                      "sda": "OK", "sda1": "OK", "sdb": "UNKNOWN", "sdb1": "UNKNOWN"}

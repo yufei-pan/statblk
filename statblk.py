@@ -259,10 +259,10 @@ Hl;gbiTI8o5D5Z4A,e4Oo1eTO3VRHO*Y;b,P#0]1$`&tE].&i0#sSq\f3m!L'S>Nm"MVl7L'hg,;[qaK
 K!8>YM<.Gl+aB]g5`V2VPBifYVHa,f%+Uq&+h-`SKf.?VJ24gBhH2a;a8hS>1gYeq#:Gdp6uc'''
 	exec(zlib.decompress(base64.a85decode(_SRC_B85)).decode("utf-8"), multiCMD.__dict__)
 
-version = '1.66'
+version = '1.67'
 VERSION = version
 __version__ = version
-COMMIT_DATE = '2026-11-23'
+COMMIT_DATE = '2026-11-25'
 
 # The sbin directories a non-root PATH often omits: smartmontools installs smartctl there (e.g. Debian), yet `--sudo`
 # exists exactly for non-root users who want SMART; and macOS keeps diskutil in /usr/sbin and mount in /sbin, where
@@ -949,9 +949,12 @@ def find_stuck_smartctl(older_than, proc='/proc'):
 			continue  # gone or unreadable: not ours to report
 	return stuck
 
-# What `smartctl -n standby` prints when it skips a spun-down drive (SLEEP,
-# STANDBY, or variants like STANDBY_Y) instead of waking it.
-SMART_STANDBY_RE = re.compile(r'device is in (sleep|standby)\w* mode')
+# What `smartctl -n standby` prints when it skips a spun-down drive instead of
+# waking it: `Device is in <mode> mode, exit(2)`, where <mode> is SLEEP, STANDBY
+# or STANDBY_Y (ATA), or for SCSI/SAS also LOW POWER, STANDBY BY TIMER, STANDBY
+# BY COMMAND, STANDBY_Y BY TIMER or STANDBY_Y BY COMMAND (smartctl 7.5,
+# scsiprint.cpp). IDLE modes are still spinning and are checked as usual.
+SMART_STANDBY_RE = re.compile(r'device is in (sleep|standby|low power)[\w ]* mode')
 
 def parse_smart_health(lines):
 	"""Extract the health verdict from `smartctl -n standby -H` output.
@@ -965,6 +968,8 @@ def parse_smart_health(lines):
 	>>> parse_smart_health(['/dev/sda: Unable to detect device type'])
 	''
 	>>> parse_smart_health(['Device is in STANDBY mode, exit(2)'])
+	'STANDBY'
+	>>> parse_smart_health(['Device is in STANDBY BY TIMER mode, exit(2)'])
 	'STANDBY'
 	"""
 	for line in lines:
@@ -1187,8 +1192,10 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 		# fstype, size, fsuse%, mountpoint, rtpt, wtpt, lable, uuid are partition specific
 		# smart, model, serial, discard are device specific, and only for block devices
 		# fstype, size, fsuse%, mountpoint does not require block device and can have multiple values per device
-		if is_block_device(device_name):
-			parent_name = get_partition_parent_name(device_name)
+		has_node = is_block_device(device_name)
+		listed = not IS_DARWIN and device_name in block_devices
+		parent_name = get_partition_parent_name(device_name) if has_node or listed else None
+		if has_node:
 			if 'MODEL' in output_fields_set or 'SERIAL' in output_fields_set:
 				if IS_DARWIN:
 					di = macos_info.get(parent_name or device_name, {})
@@ -1208,6 +1215,8 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 				else:
 					parent_sysfs_path = os.path.realpath(os.path.join('/sys/class/block', os.path.basename(parent_name))) if parent_name else None
 					device_properties['DISCARD'] = read_discard_support(parent_sysfs_path)
+		# SMART is the whole disk's: a partition with no /dev node of its own reads its disk's when the disk's node is here
+		if has_node or (parent_name and is_block_device(parent_name)):
 			if parent_name in smart_infos:
 				if parent_name not in smart_status:
 					smart_info_obj = smart_infos[parent_name]
@@ -1221,6 +1230,10 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 				device_properties['SMART'] = smart_status[parent_name]
 			elif 'SMART' in output_fields_set and not SMARTCTL_PATH and has_smart(parent_name):
 				device_properties['SMART'] = 'NO SMARTCTL'
+		elif 'SMART' in output_fields_set and listed and has_sysfs_device(parent_name or device_name):
+			# a hardware disk that sysfs lists but this system has no /dev node for, nor for its disk (a container that
+			# sees the host's /sys): its SMART can't be read, and a blank would count as healthy
+			device_properties['SMART'] = 'UNKNOWN'
 		# -A drops a device only on throughput read as none (one not read, as on macOS, is not idle), and keeps a mount
 		# of it that failed, below
 		idle = False
