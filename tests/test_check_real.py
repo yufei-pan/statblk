@@ -806,13 +806,14 @@ def test_mac_check_with_a_pattern_that_matches_nothing_could_not_tell(monkeypatc
 SDA1_MOUNTED = "102 99 8:1 / /mnt/data rw,relatime - ext4 /dev/sda1 rw\n"
 
 
-def _no_dev_nodes(monkeypatch, tmp_path, mountinfo=""):
+def _no_dev_nodes(monkeypatch, tmp_path, mountinfo="", nodes=(), failing=None):
     """_virtual's host seen from a container: sysfs lists every device (a `device` link on the whole disks sda and sdb
-    only, as on a real host), /dev has no node for any of them."""
-    run = _virtual(monkeypatch, tmp_path, disks=True, mountinfo=mountinfo, smart="SMART Health Status: OK")
-    monkeypatch.setattr(statblk, "is_block_device", lambda p: False)
+    only, as on a real host), /dev has a node only for `nodes` (none by default). A disk's smartctl answers OK, or
+    FAILED for `failing` (a device path)."""
+    run = _virtual(monkeypatch, tmp_path, failing or "/dev/none", disks=True, mountinfo=mountinfo,
+                   smart=None if failing else "SMART Health Status: OK")
+    monkeypatch.setattr(statblk, "is_block_device", lambda p: p in nodes)
     monkeypatch.setattr(statblk, "has_sysfs_device", lambda disk: os.path.basename(disk) in ("sda", "sdb"))
-    monkeypatch.setattr(statblk, "sysfs_disk_name", lambda p: os.path.basename(p).rstrip("0123456789"))
     return run
 
 
@@ -832,3 +833,31 @@ def test_linux_check_of_disks_with_no_dev_node_space_only(monkeypatch, capsys, t
     rows = statblk.get_drives_info(output="NAME,SMART")
     assert dict((r[0], r[1]) for r in rows[1:]) == {**{name: "" for name in VIRTUAL_NAMES},
                                                       "sda": "UNKNOWN", "sda1": "UNKNOWN", "sdb": "UNKNOWN", "sdb1": "UNKNOWN"}
+
+
+# A partition has no SMART of its own: it reads its disk's. A container given a disk's node (`docker run --device
+# /dev/sda`) but not its partitions' reads the disk's SMART for them too (the 1.67 build said UNKNOWN, exit 3).
+DISK_NODES = ("/dev/sda", "/dev/sdb")
+
+
+@pytest.mark.parametrize("argv", [[], ["-P"]], ids=["plain", "-P"])
+def test_linux_check_of_disks_given_their_nodes_but_not_their_partitions_judges_them(monkeypatch, capsys, tmp_path, argv):
+    run = _no_dev_nodes(monkeypatch, tmp_path, mountinfo=SDA1_MOUNTED, nodes=DISK_NODES)
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"] + argv, run) == (0, [], "", "")
+    rows = statblk.get_drives_info(output="NAME,SMART")
+    assert dict((r[0], r[1]) for r in rows[1:]) == {**{name: "" for name in VIRTUAL_NAMES},
+                                                      "sda": "OK", "sda1": "OK", "sdb": "OK", "sdb1": "OK"}
+
+
+def test_linux_check_of_a_failing_disk_given_its_node_lists_its_partitions_too(monkeypatch, capsys, tmp_path):
+    run = _no_dev_nodes(monkeypatch, tmp_path, nodes=DISK_NODES, failing="/dev/sdb")
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"], run) == (1, ["sdb", "sdb1"], "T\n", "")
+
+
+def test_linux_check_of_one_disk_given_its_node_and_the_other_not(monkeypatch, capsys, tmp_path):
+    # sda's node is here, sdb's is not: sda and sda1 are read, sdb and sdb1 could not be (UNKNOWN, exit 3)
+    run = _no_dev_nodes(monkeypatch, tmp_path, nodes=("/dev/sda",))
+    assert _run(monkeypatch, capsys, ["--check", "-t", "0.5"], run) == (3, ["sdb", "sdb1"], "T\n", "")
+    rows = statblk.get_drives_info(output="NAME,SMART")
+    assert dict((r[0], r[1]) for r in rows[1:]) == {**{name: "" for name in VIRTUAL_NAMES},
+                                                      "sda": "OK", "sda1": "OK", "sdb": "UNKNOWN", "sdb1": "UNKNOWN"}

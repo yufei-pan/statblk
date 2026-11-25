@@ -806,15 +806,6 @@ def has_smart(parent_name):
 	"not checked", so it is shown as NO SMARTCTL / UNKNOWN instead."""
 	return bool(parent_name) and (IS_DARWIN or has_sysfs_device(parent_name))
 
-def sysfs_disk_name(name):
-	"""The kernel name of the whole disk a Linux block device belongs to, read from sysfs alone (no /dev node needed):
-	the parent's name for a partition, the device's own otherwise."""
-	name = os.path.basename(name)
-	sysfs_block_path = os.path.realpath(os.path.join('/sys/class/block', name))
-	if os.path.exists(os.path.join(sysfs_block_path, 'partition')):
-		return os.path.basename(os.path.dirname(sysfs_block_path)) or name
-	return name
-
 def is_squashfs_loop(device_name, fstype):
 	"""True for a squashfs image on a loop device (snaps, AppImages): read-only
 	and always 100% full, so it is hidden unless --show_squashfs.
@@ -1201,8 +1192,10 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 		# fstype, size, fsuse%, mountpoint, rtpt, wtpt, lable, uuid are partition specific
 		# smart, model, serial, discard are device specific, and only for block devices
 		# fstype, size, fsuse%, mountpoint does not require block device and can have multiple values per device
-		if is_block_device(device_name):
-			parent_name = get_partition_parent_name(device_name)
+		has_node = is_block_device(device_name)
+		listed = not IS_DARWIN and device_name in block_devices
+		parent_name = get_partition_parent_name(device_name) if has_node or listed else None
+		if has_node:
 			if 'MODEL' in output_fields_set or 'SERIAL' in output_fields_set:
 				if IS_DARWIN:
 					di = macos_info.get(parent_name or device_name, {})
@@ -1222,6 +1215,8 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 				else:
 					parent_sysfs_path = os.path.realpath(os.path.join('/sys/class/block', os.path.basename(parent_name))) if parent_name else None
 					device_properties['DISCARD'] = read_discard_support(parent_sysfs_path)
+		# SMART is the whole disk's: a partition with no /dev node of its own reads its disk's when the disk's node is here
+		if has_node or (parent_name and is_block_device(parent_name)):
 			if parent_name in smart_infos:
 				if parent_name not in smart_status:
 					smart_info_obj = smart_infos[parent_name]
@@ -1235,10 +1230,9 @@ def get_drives_info(print_bytes = False, use_1024 = False, mounted_only=False, b
 				device_properties['SMART'] = smart_status[parent_name]
 			elif 'SMART' in output_fields_set and not SMARTCTL_PATH and has_smart(parent_name):
 				device_properties['SMART'] = 'NO SMARTCTL'
-		elif 'SMART' in output_fields_set and not IS_DARWIN and device_name in block_devices and \
-				has_sysfs_device(sysfs_disk_name(device_name)):
-			# a hardware disk that sysfs lists but this system has no /dev node for (a container that sees the host's
-			# /sys): its SMART can't be read, and a blank would count as healthy
+		elif 'SMART' in output_fields_set and listed and has_sysfs_device(parent_name or device_name):
+			# a hardware disk that sysfs lists but this system has no /dev node for, nor for its disk (a container that
+			# sees the host's /sys): its SMART can't be read, and a blank would count as healthy
 			device_properties['SMART'] = 'UNKNOWN'
 		# -A drops a device only on throughput read as none (one not read, as on macOS, is not idle), and keeps a mount
 		# of it that failed, below
